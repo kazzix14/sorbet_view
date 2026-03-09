@@ -1,0 +1,8 @@
+<%# locals: (user:, show_avatar: true) %>
+<%# locals_sig: sig { params(user: User, show_avatar: T::Boolean).void } %>
+<div class="card">
+  <% if show_avatar %>
+    <%= image_tag(user.avatar_url) %>
+  <% end %>
+  <p><%= user.name %></p>
+</div>

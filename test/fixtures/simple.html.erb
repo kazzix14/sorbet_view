@@ -1,0 +1,4 @@
+<h1><%= @title %></h1>
+<% if @user.admin? %>
+  <span><%= t("admin") %></span>
+<% end %>

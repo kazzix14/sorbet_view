@@ -24,13 +24,15 @@ module SorbetView
         @next_id = T.let(1, Integer)
       end
 
-      sig { void }
-      def start
+      sig { params(extra_args: T::Array[String]).void }
+      def start(extra_args: [])
         cmd = [
           @config.sorbet_path,
           'tc',
           '--lsp',
-          '--enable-all-experimental-lsp-features'
+          '--enable-all-experimental-lsp-features',
+          *@config.sorbet_options,
+          *extra_args
         ]
 
         @logger.info("Starting Sorbet: #{cmd.join(' ')}")

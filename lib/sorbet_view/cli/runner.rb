@@ -141,9 +141,10 @@ module SorbetView
 
         sig { params(args: T::Array[String]).void }
         def run_lsp(args)
+          _, sorbet_args = split_args(args)
           $stdin.binmode
           $stdout.binmode
-          server = Lsp::Server.new
+          server = Lsp::Server.new(sorbet_args: sorbet_args)
           server.start
         end
 
@@ -192,7 +193,7 @@ module SorbetView
           puts '  [paths...]         Input directories (overrides config)'
           puts '  -o, --output DIR   Output directory (overrides config)'
           puts '  --no-config        Ignore .sorbet_view.yml'
-          puts '  -- [args...]       Pass remaining args to srb tc (tc only)'
+          puts '  -- [args...]       Pass remaining args to srb tc (tc/lsp)'
         end
 
         sig { params(path: String).returns(T::Boolean) }

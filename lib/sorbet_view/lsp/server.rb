@@ -9,9 +9,10 @@ module SorbetView
     class Server
       extend T::Sig
 
-      sig { params(input: IO, output: IO).void }
-      def initialize(input: $stdin, output: $stdout)
+      sig { params(input: IO, output: IO, sorbet_args: T::Array[String]).void }
+      def initialize(input: $stdin, output: $stdout, sorbet_args: [])
         @config = T.let(Configuration.load, Configuration)
+        @sorbet_args = T.let(sorbet_args, T::Array[String])
         @logger = T.let(Logger.new(File.open('sorbet_view_lsp.log', 'a')), Logger)
         @transport = T.let(Transport.new(input: input, output: output), Transport)
         @document_store = T.let(DocumentStore.new, DocumentStore)
@@ -100,7 +101,7 @@ module SorbetView
         compile_all_templates
 
         # Start Sorbet LSP
-        @sorbet.start
+        @sorbet.start(extra_args: @sorbet_args)
 
         # Register handler for diagnostics from Sorbet
         @sorbet.on_notification('textDocument/publishDiagnostics') do |msg|

@@ -3,7 +3,7 @@
   "displayName": "Sorbet View",
   "description": "ERB template type-checking and LSP support via Sorbet",
   "version": "0.1.0",
-  "publisher": "sorbet-view",
+  "publisher": "kazzix14",
   "license": "MIT",
   "engines": {
     "vscode": "^1.91.0"

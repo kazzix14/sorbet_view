@@ -18,12 +18,14 @@ module SorbetView
         @uri_mapper = T.let(UriMapper.new(config: @config), UriMapper)
         @position_translator = T.let(PositionTranslator.new, PositionTranslator)
         @compiler = T.let(Compiler::TemplateCompiler.new(config: @config), Compiler::TemplateCompiler)
+        @component_compiler = T.let(Compiler::ComponentCompiler.new(config: @config), Compiler::ComponentCompiler)
         @output_manager = T.let(FileSystem::OutputManager.new(@config.output_dir), FileSystem::OutputManager)
         @sorbet = T.let(SorbetProcess.new(config: @config, logger: @logger), SorbetProcess)
         @file_watcher = T.let(nil, T.nilable(FileSystem::FileWatcher))
         @initialized = T.let(false, T::Boolean)
         @shutdown = T.let(false, T::Boolean)
         @sorbet_open_uris = T.let(Set.new, T::Set[String])
+        @component_version = T.let(0, Integer)
       end
 
       sig { void }
@@ -150,7 +152,9 @@ module SorbetView
           doc = @document_store.open(uri, text, version)
           compile_and_sync(doc)
         else
+          # Forward .rb files to Sorbet; also recompile if they contain erb_template
           forward_to_sorbet(message)
+          compile_component_if_needed(uri, text)
         end
       end
 
@@ -168,6 +172,9 @@ module SorbetView
           compile_and_sync(doc) if doc
         else
           forward_to_sorbet(message)
+          changes = params['contentChanges']
+          text = changes&.last&.fetch('text', nil)
+          compile_component_if_needed(uri, text) if text
         end
       end
 
@@ -187,10 +194,14 @@ module SorbetView
       sig { params(message: T::Hash[String, T.untyped]).void }
       def handle_did_save(message)
         uri = message.dig('params', 'textDocument', 'uri')
-        return unless @uri_mapper.template_uri?(uri)
+        text = message.dig('params', 'text')
 
-        doc = @document_store.get(uri)
-        compile_and_sync(doc) if doc
+        if @uri_mapper.template_uri?(uri)
+          doc = @document_store.get(uri)
+          compile_and_sync(doc) if doc
+        else
+          compile_component_if_needed(uri, text)
+        end
       end
 
       # --- Proxied Requests (hover, completion, definition, etc.) ---
@@ -200,24 +211,74 @@ module SorbetView
         params = message['params']
         uri = params.dig('textDocument', 'uri')
 
-        unless @uri_mapper.template_uri?(uri)
+        if @uri_mapper.template_uri?(uri)
+          handle_template_proxied_request(message, uri)
+        elsif try_handle_component_proxied_request(message, uri)
+          # Handled as component heredoc
+        else
           forward_to_sorbet(message)
-          return
         end
+      end
 
-        template_path = @uri_mapper.uri_to_path(uri)
-        ruby_uri = @uri_mapper.template_to_ruby_uri(uri)
+      sig { params(message: T::Hash[String, T.untyped], uri: String).void }
+      def handle_template_proxied_request(message, uri)
+        Perf.measure("lsp.proxy.#{message['method']}") do
+          params = message['params']
+          template_path = @uri_mapper.uri_to_path(uri)
+          ruby_uri = @uri_mapper.template_to_ruby_uri(uri)
+          position = params['position']
+
+          # Translate position from template to Ruby
+          ruby_position = @position_translator.template_to_ruby(template_path, position)
+          unless ruby_position
+            # Cursor is in HTML, not Ruby code
+            @transport.send_response(message['id'], nil)
+            next
+          end
+
+          # Rewrite request for Sorbet
+          rewritten = message.dup
+          rewritten['params'] = params.merge({
+            'textDocument' => { 'uri' => ruby_uri },
+            'position' => ruby_position
+          })
+
+          # Forward to Sorbet
+          result = Perf.measure('lsp.sorbet_roundtrip') do
+            @sorbet.send_request(message['method'], rewritten['params'])
+          end
+          sorbet_result = result&.fetch('result', nil)
+
+          # Translate response back to template coordinates
+          translated = translate_result(message['method'], template_path, uri, sorbet_result)
+          @transport.send_response(message['id'], translated)
+        end
+      end
+
+      # Try to handle a proxied request for a .rb component with erb_template heredoc.
+      # Returns true if handled, false if not a component or cursor is outside heredoc.
+      sig { params(message: T::Hash[String, T.untyped], uri: String).returns(T::Boolean) }
+      def try_handle_component_proxied_request(message, uri)
+        path = @uri_mapper.uri_to_path(uri)
+        @logger.debug("try_handle_component: path=#{path} end_with_rb=#{path.end_with?('.rb')}")
+        return false unless path.end_with?('.rb')
+
+        # Check if we have a source map registered for this component
+        sm = @position_translator.source_map_for(path)
+        @logger.debug("try_handle_component: source_map=#{sm ? 'found' : 'nil'} registered_keys=#{@position_translator.registered_paths.inspect}")
+        return false unless sm
+
+        params = message['params']
         position = params['position']
 
-        # Translate position from template to Ruby
-        ruby_position = @position_translator.template_to_ruby(template_path, position)
-        unless ruby_position
-          # Cursor is in HTML, not Ruby code
-          @transport.send_response(message['id'], nil)
-          return
-        end
+        # Try translating — returns nil if cursor is outside heredoc Ruby code
+        ruby_position = @position_translator.template_to_ruby(path, position)
+        @logger.debug("try_handle_component: position=#{position.inspect} -> ruby_position=#{ruby_position.inspect}")
+        return false unless ruby_position
 
-        # Rewrite request for Sorbet
+        ruby_uri = @uri_mapper.component_to_ruby_uri(uri)
+
+        # Rewrite request for the generated __erb_template.rb
         rewritten = message.dup
         rewritten['params'] = params.merge({
           'textDocument' => { 'uri' => ruby_uri },
@@ -228,9 +289,10 @@ module SorbetView
         result = @sorbet.send_request(message['method'], rewritten['params'])
         sorbet_result = result&.fetch('result', nil)
 
-        # Translate response back to template coordinates
-        translated = translate_result(message['method'], template_path, uri, sorbet_result)
+        # Translate response back to .rb file coordinates
+        translated = translate_result(message['method'], path, uri, sorbet_result)
         @transport.send_response(message['id'], translated)
+        true
       end
 
       # --- Sorbet Diagnostics ---
@@ -367,6 +429,7 @@ module SorbetView
 
       sig { params(doc: Document).void }
       def compile_and_sync(doc)
+        Perf.measure('lsp.compile_and_sync') do
         template_path = @uri_mapper.uri_to_path(doc.uri)
         result = @compiler.compile(template_path, doc.content)
         doc.compile_result = result
@@ -395,21 +458,94 @@ module SorbetView
           })
           @sorbet_open_uris.add(ruby_uri)
         end
+        end # Perf.measure
+      end
+
+      sig { params(uri: String, text: T.nilable(String)).void }
+      def compile_component_if_needed(uri, text)
+        path = @uri_mapper.uri_to_path(uri)
+        return unless path.end_with?('.rb')
+
+        source = if text
+          text
+        else
+          # Try mapped path first, then original URI path
+          if File.exist?(path)
+            File.read(path)
+          else
+            raw_path = URI.decode_www_form_component(URI.parse(uri).path || '')
+            unless File.exist?(raw_path)
+              @logger.debug("compile_component: file not found at #{path} or #{raw_path}")
+              return
+            end
+            File.read(raw_path)
+          end
+        end
+
+        unless Compiler::HeredocExtractor.contains_erb_template?(source)
+          return
+        end
+
+        @logger.debug("compile_component: compiling #{path}")
+        results = @component_compiler.compile(path, source)
+        results.each do |result|
+          @output_manager.write(result)
+          @position_translator.register(path, result.source_map)
+
+          @component_version += 1
+          ruby_uri = @uri_mapper.path_to_uri(result.source_map.ruby_path)
+          if @sorbet_open_uris.include?(ruby_uri)
+            @sorbet.send_notification('textDocument/didChange', {
+              'textDocument' => { 'uri' => ruby_uri, 'version' => @component_version },
+              'contentChanges' => [{ 'text' => result.ruby_source }]
+            })
+          else
+            @sorbet.send_notification('textDocument/didOpen', {
+              'textDocument' => {
+                'uri' => ruby_uri,
+                'languageId' => 'ruby',
+                'version' => @component_version,
+                'text' => result.ruby_source
+              }
+            })
+            @sorbet_open_uris.add(ruby_uri)
+          end
+        end
       end
 
       sig { void }
       def compile_all_templates
+        Perf.reset!
         templates = FileSystem::ProjectScanner.scan(@config)
         @logger.info("Compiling #{templates.length} templates")
 
-        templates.each do |path|
-          source = File.read(path)
-          result = @compiler.compile(path, source)
+        Perf.measure('lsp.compile_all_templates') do
+          templates.each do |path|
+            source = File.read(path)
+            result = @compiler.compile(path, source)
 
-          next if result.source_map.entries.empty? && @config.skip_missing_locals && requires_locals?(path)
+            next if result.source_map.entries.empty? && @config.skip_missing_locals && requires_locals?(path)
 
-          @output_manager.write(result)
-          @position_translator.register(path, result.source_map)
+            @output_manager.write(result)
+            @position_translator.register(path, result.source_map)
+          end
+        end
+
+        compile_all_components
+        Perf.report_to_logger(@logger)
+      end
+
+      sig { void }
+      def compile_all_components
+        components = FileSystem::ProjectScanner.scan_components(@config)
+        @logger.info("Compiling #{components.length} component(s) with erb_template")
+
+        components.each do |path|
+          results = @component_compiler.compile_file(path)
+          results.each do |result|
+            @output_manager.write(result)
+            @position_translator.register(path, result.source_map)
+          end
         end
       end
 
@@ -441,18 +577,22 @@ module SorbetView
 
           @logger.debug("File changed on disk: #{path}")
           source = File.read(path)
-          result = @compiler.compile(path, source)
 
-          next if result.source_map.entries.empty? && @config.skip_missing_locals && requires_locals?(path)
+          if path.end_with?('.rb')
+            # Component .rb file — compile and notify Sorbet
+            compile_component_if_needed(template_uri, source)
+          else
+            result = @compiler.compile(path, source)
+            next if result.source_map.entries.empty? && @config.skip_missing_locals && requires_locals?(path)
 
-          @output_manager.write(result)
-          @position_translator.register(path, result.source_map)
+            @output_manager.write(result)
+            @position_translator.register(path, result.source_map)
+          end
         end
 
         removed.each do |path|
           @logger.debug("File removed: #{path}")
           @position_translator.unregister(path)
-          # Generated .rb file will be cleaned up on next full compile
         end
       rescue => e
         @logger.error("FileWatcher callback error: #{e.message}")

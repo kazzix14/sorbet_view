@@ -30,20 +30,24 @@ module SorbetView
 
       sig { params(position: Position).returns(T.nilable(Position)) }
       def template_to_ruby(position)
-        entry = find_entry_by_template(position)
-        return nil unless entry
-        return nil if entry.type == :boilerplate
+        Perf.measure('sourcemap.template_to_ruby') do
+          entry = find_entry_by_template(position)
+          next nil unless entry
+          next nil if entry.type == :boilerplate
 
-        translate(position, entry.template_range, entry.ruby_range)
+          translate(position, entry.template_range, entry.ruby_range)
+        end
       end
 
       sig { params(position: Position).returns(T.nilable(Position)) }
       def ruby_to_template(position)
-        entry = find_entry_by_ruby(position)
-        return nil unless entry
-        return nil if entry.type == :boilerplate
+        Perf.measure('sourcemap.ruby_to_template') do
+          entry = find_entry_by_ruby(position)
+          next nil unless entry
+          next nil if entry.type == :boilerplate
 
-        translate(position, entry.ruby_range, entry.template_range)
+          translate(position, entry.ruby_range, entry.template_range)
+        end
       end
 
       sig { params(ruby_range: Range).returns(T.nilable(Range)) }

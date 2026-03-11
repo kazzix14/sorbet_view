@@ -8,7 +8,7 @@ Gem::Specification.new do |spec|
   spec.authors = ['kazuma']
   spec.summary = 'Sorbet type-checking for Rails view templates'
   spec.description = 'Extracts Ruby code from view templates (ERB, etc.) for Sorbet type-checking, with LSP support'
-  spec.homepage = 'https://github.com/user/sorbet_view'
+  spec.homepage = 'https://github.com/kazzix14/sorbet_view'
   spec.license = 'MIT'
   spec.required_ruby_version = '>= 3.2'
 
@@ -30,4 +30,5 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'listen', '~> 3.0'
   spec.add_dependency 'psych'
   spec.add_dependency 'sorbet-runtime'
+  spec.add_dependency 'srb_lens', '~> 0.2.0'
 end

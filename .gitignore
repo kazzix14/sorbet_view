@@ -1,0 +1,14 @@
+*.gem
+pkg/
+tmp/
+sorbet_view_lsp.log
+
+# Bundle
+Gemfile.lock
+
+# Sorbet
+sorbet/templates/
+
+# Node (VSCode extension)
+vscode/node_modules/
+vscode/out/

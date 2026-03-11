@@ -89,8 +89,12 @@ module SorbetView
 
         sig { params(args: T::Array[String]).void }
         def run_compile(args)
+          Perf.reset!
+          total_start = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
           config = parse_config(args)
           compiler = Compiler::TemplateCompiler.new(config: config)
+          component_compiler = Compiler::ComponentCompiler.new(config: config)
           output_manager = FileSystem::OutputManager.new(config.output_dir)
 
           templates = FileSystem::ProjectScanner.scan(config)
@@ -107,7 +111,22 @@ module SorbetView
             puts "  #{path} -> #{result.source_map.ruby_path}"
           end
 
-          puts 'Done.'
+          components = FileSystem::ProjectScanner.scan_components(config)
+          if components.any?
+            puts "Compiling #{components.length} component(s) with erb_template..."
+
+            components.each do |path|
+              results = component_compiler.compile_file(path)
+              results.each do |result|
+                output_manager.write(result)
+                puts "  #{path} -> #{result.source_map.ruby_path}"
+              end
+            end
+          end
+
+          total_ms = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - total_start) * 1000.0
+          puts "Done. (total: #{total_ms.round(1)}ms)"
+          Perf.report
         end
 
         sig { params(args: T::Array[String]).void }

@@ -38,6 +38,14 @@ module SorbetView
         path_to_uri(ruby_path)
       end
 
+      # component .rb URI -> generated __erb_template.rb URI
+      sig { params(component_uri: String).returns(String) }
+      def component_to_ruby_uri(component_uri)
+        path = uri_to_path(component_uri)
+        ruby_path = File.join(@output_dir, "#{path}__erb_template.rb")
+        path_to_uri(ruby_path)
+      end
+
       # generated ruby URI -> template URI
       sig { params(ruby_uri: String).returns(T.nilable(String)) }
       def ruby_to_template_uri(ruby_uri)
@@ -47,6 +55,12 @@ module SorbetView
         relative = path.sub(%r{^.*/#{Regexp.escape(@output_dir)}/}, '')
                        .sub(%r{^#{Regexp.escape(@output_dir)}/}, '')
         return nil unless relative.end_with?('.rb')
+
+        # Component heredoc: output is foo.rb__erb_template.rb → source is foo.rb
+        if relative.end_with?('__erb_template.rb')
+          template_path = relative.chomp('__erb_template.rb')
+          return path_to_uri(template_path)
+        end
 
         template_path = relative.chomp('.rb')
         path_to_uri(template_path)

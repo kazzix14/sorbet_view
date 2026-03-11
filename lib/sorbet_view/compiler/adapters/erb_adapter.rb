@@ -12,10 +12,12 @@ module SorbetView
 
         sig { override.params(source: String).returns(T::Array[RubySegment]) }
         def extract_segments(source)
-          if herb_available?
-            extract_with_herb(source)
-          else
-            extract_with_stdlib(source)
+          Perf.measure('erb.extract_segments') do
+            if herb_available?
+              Perf.measure('erb.extract_with_herb') { extract_with_herb(source) }
+            else
+              Perf.measure('erb.extract_with_stdlib') { extract_with_stdlib(source) }
+            end
           end
         end
 

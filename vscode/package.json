@@ -13,7 +13,8 @@
     "Linters"
   ],
   "activationEvents": [
-    "onLanguage:erb"
+    "onLanguage:erb",
+    "onLanguage:ruby"
   ],
   "main": "./dist/extension.js",
   "contributes": {

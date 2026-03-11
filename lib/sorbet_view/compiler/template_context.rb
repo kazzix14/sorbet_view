@@ -17,6 +17,18 @@ module SorbetView
         superclass ? " < #{superclass}" : ''
       end
 
+      sig { params(component_path: String, class_name: String, config: Configuration).returns(TemplateContext) }
+      def self.resolve_component(component_path, class_name, config)
+        ruby_path = File.join(config.output_dir, "#{component_path}__erb_template.rb")
+        new(
+          class_name: class_name,
+          superclass: nil,
+          includes: [],
+          template_path: component_path,
+          ruby_path: ruby_path
+        )
+      end
+
       sig { params(template_path: String, config: Configuration).returns(TemplateContext) }
       def self.resolve(template_path, config)
         ruby_path = File.join(config.output_dir, "#{template_path}.rb")

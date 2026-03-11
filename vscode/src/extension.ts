@@ -57,7 +57,10 @@ async function startClient(): Promise<void> {
   };
 
   const clientOptions: LanguageClientOptions = {
-    documentSelector: [{ scheme: "file", language: "erb" }],
+    documentSelector: [
+      { scheme: "file", language: "erb" },
+      { scheme: "file", language: "ruby" },
+    ],
     outputChannel,
   };
 

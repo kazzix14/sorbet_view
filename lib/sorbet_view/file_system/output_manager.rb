@@ -16,17 +16,19 @@ module SorbetView
 
       sig { params(result: Compiler::CompileResult).void }
       def write(result)
-        path = result.source_map.ruby_path
-        dir = File.dirname(path)
-        FileUtils.mkdir_p(dir)
+        Perf.measure('output.write') do
+          path = result.source_map.ruby_path
+          dir = File.dirname(path)
+          FileUtils.mkdir_p(dir)
 
-        # Only write if content changed (avoid unnecessary Watchman triggers)
-        if File.exist?(path)
-          existing = File.read(path)
-          return if existing == result.ruby_source
+          # Only write if content changed (avoid unnecessary Watchman triggers)
+          if File.exist?(path)
+            existing = File.read(path)
+            next if existing == result.ruby_source
+          end
+
+          File.write(path, result.ruby_source)
         end
-
-        File.write(path, result.ruby_source)
       end
 
       sig { void }

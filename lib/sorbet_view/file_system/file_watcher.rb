@@ -22,15 +22,15 @@ module SorbetView
 
       sig { void }
       def start
-        dirs = @config.input_dirs.select { |d| Dir.exist?(d) }
+        dirs = (@config.input_dirs + @config.component_dirs).select { |d| Dir.exist?(d) }
         return if dirs.empty?
 
         @listener = Listen.to(
           *dirs,
-          only: /\.erb$/,
+          only: /\.(erb|rb)$/,
           wait_for_delay: 0.1
         ) do |modified, added, removed|
-          # Filter out excluded paths
+          # Filter out excluded paths; for .rb files, only pass those containing erb_template
           modified = filter_paths(modified)
           added = filter_paths(added)
           removed = filter_paths(removed)

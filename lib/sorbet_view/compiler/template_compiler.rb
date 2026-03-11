@@ -15,9 +15,11 @@ module SorbetView
 
       sig { params(template_path: String, source: String).returns(CompileResult) }
       def compile(template_path, source)
-        segments = @adapter.extract_segments(source)
-        context = TemplateContext.resolve(template_path, @config)
-        @generator.generate(segments: segments, context: context, config: @config)
+        Perf.measure('compiler.compile') do
+          segments = @adapter.extract_segments(source)
+          context = TemplateContext.resolve(template_path, @config)
+          @generator.generate(segments: segments, context: context, config: @config)
+        end
       rescue => e
         # On parse failure, generate a minimal file so Sorbet doesn't complain about missing files
         context = TemplateContext.resolve(template_path, @config)

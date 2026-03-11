@@ -27,6 +27,11 @@ module SorbetView
         @source_maps[template_path]
       end
 
+      sig { returns(T::Array[String]) }
+      def registered_paths
+        @source_maps.keys
+      end
+
       # Translate an LSP position from template coordinates to Ruby coordinates
       sig do
         params(

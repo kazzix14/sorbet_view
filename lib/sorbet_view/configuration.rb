@@ -14,6 +14,7 @@ module SorbetView
     const :sorbet_path, String, default: 'srb'
     const :typed_level, String, default: 'true'
     const :path_mapping, T::Hash[String, String], default: {}
+    const :component_dirs, T::Array[String], default: []
 
     class << self
       extend T::Sig

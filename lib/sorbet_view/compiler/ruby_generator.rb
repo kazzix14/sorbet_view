@@ -1,6 +1,8 @@
 # typed: strict
 # frozen_string_literal: true
 
+require 'json'
+
 module SorbetView
   module Compiler
     class CompileResult < T::Struct
@@ -20,10 +22,23 @@ module SorbetView
         params(
           segments: T::Array[RubySegment],
           context: TemplateContext,
-          config: Configuration
+          config: Configuration,
+          component_mode: T::Boolean
         ).returns(CompileResult)
       end
-      def generate(segments:, context:, config:)
+      def generate(segments:, context:, config:, component_mode: false)
+        return Perf.measure('generator.generate') { _generate(segments: segments, context: context, config: config, component_mode: component_mode) }
+      end
+
+      sig do
+        params(
+          segments: T::Array[RubySegment],
+          context: TemplateContext,
+          config: Configuration,
+          component_mode: T::Boolean
+        ).returns(CompileResult)
+      end
+      def _generate(segments:, context:, config:, component_mode: false)
         locals = T.let(nil, T.nilable(String))
         locals_sig = T.let(nil, T.nilable(String))
         code_segments = T.let([], T::Array[RubySegment])
@@ -51,25 +66,34 @@ module SorbetView
         lines << "# source: #{context.template_path}"
         lines << ''
         lines << "class #{context.class_name}#{context.superclass_clause}"
-        lines << '  extend T::Sig'
-        context.includes.each { |inc| lines << "  include #{inc}" }
-        lines << ''
 
-        if config.extra_body.length > 0
-          config.extra_body.each_line { |l| lines << "  #{l.chomp}" }
+        unless component_mode
+          lines << '  extend T::Sig'
+          context.includes.each { |inc| lines << "  include #{inc}" }
           lines << ''
+
+          if config.extra_body.length > 0
+            config.extra_body.each_line { |l| lines << "  #{l.chomp}" }
+            lines << ''
+          end
+
+          lines << '  sig { returns(T::Hash[Symbol, T.untyped]) }'
+          lines << '  def local_assigns = {}'
+          lines << ''
+
+          if locals_sig
+            lines << "  #{locals_sig}"
+          end
         end
 
-        lines << '  sig { returns(T::Hash[Symbol, T.untyped]) }'
-        lines << '  def local_assigns = {}'
-        lines << ''
-
-        if locals_sig
-          lines << "  #{locals_sig}"
-        end
-
-        method_args = locals || '()'
+        method_args = component_mode ? '' : (locals || '()')
         lines << "  def __sorbet_view_render#{method_args}"
+
+        # Declare undefined instance variables as NilClass
+        undefined_ivars = find_undefined_ivars(code_segments, context, config, component_mode)
+        undefined_ivars.each do |ivar|
+          lines << "    #{ivar} = T.let(nil, NilClass)"
+        end
 
         # Body: extracted Ruby code
         code_segments.each do |seg|
@@ -119,6 +143,68 @@ module SorbetView
           locals: locals,
           locals_sig: locals_sig
         )
+      end
+
+      private
+
+      # Collect @variable references from code segments
+      sig { params(segments: T::Array[RubySegment]).returns(T::Array[String]) }
+      def collect_ivars(segments)
+        segments.flat_map { |seg| seg.code.scan(/(?<!@)@[a-zA-Z_]\w*/) }.uniq.sort
+      end
+
+      # Find instance variables used in the template but not defined
+      sig do
+        params(
+          segments: T::Array[RubySegment],
+          context: TemplateContext,
+          config: Configuration,
+          component_mode: T::Boolean
+        ).returns(T::Array[String])
+      end
+      def find_undefined_ivars(segments, context, config, component_mode)
+        all_ivars = collect_ivars(segments)
+        return [] if all_ivars.empty?
+
+        defined_ivars = if component_mode
+          load_component_defined_ivars(context.template_path)
+        else
+          load_view_defined_ivars(context.template_path, config)
+        end
+
+        all_ivars - defined_ivars
+      end
+
+      # Scan the component .rb source for @var = assignments
+      sig { params(component_path: String).returns(T::Array[String]) }
+      def load_component_defined_ivars(component_path)
+        return [] unless File.exist?(component_path)
+
+        source = File.read(component_path)
+        source.scan(/(?<!@)@([a-zA-Z_]\w*)\s*(?:=|\|\|=)/).map { |m| "@#{m[0]}" }.uniq
+      end
+
+      # Load defined ivars from the Tapioca-generated mapping for views
+      sig { params(template_path: String, config: Configuration).returns(T::Array[String]) }
+      def load_view_defined_ivars(template_path, config)
+        mapping_path = File.join(config.output_dir, '.defined_ivars.json')
+        return [] unless File.exist?(mapping_path)
+
+        @ivar_mapping = T.let(@ivar_mapping, T.nilable(T::Hash[String, T::Array[String]]))
+        @ivar_mapping ||= begin
+          JSON.parse(File.read(mapping_path))
+        rescue JSON::ParserError
+          {}
+        end
+
+        # Derive controller_path from template_path
+        # app/views/posts/show.html.erb → posts
+        # app/views/admin_area/v21/booths/show.html.erb → admin_area/v21/booths
+        controller_path = template_path
+          .sub(%r{^app/views/}, '')
+          .sub(%r{/[^/]+$}, '') # strip filename
+
+        @ivar_mapping[controller_path] || []
       end
     end
   end

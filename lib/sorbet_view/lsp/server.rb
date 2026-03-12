@@ -156,6 +156,7 @@ module SorbetView
           # Forward .rb files to Sorbet; also recompile if they contain erb_template
           forward_to_sorbet(message)
           compile_component_if_needed(uri, text)
+          recompile_templates_for_controller(uri)
         end
       end
 
@@ -176,6 +177,7 @@ module SorbetView
           changes = params['contentChanges']
           text = changes&.last&.fetch('text', nil)
           compile_component_if_needed(uri, text) if text
+          recompile_templates_for_controller(uri)
         end
       end
 
@@ -202,6 +204,7 @@ module SorbetView
           compile_and_sync(doc) if doc
         else
           compile_component_if_needed(uri, text)
+          recompile_templates_for_controller(uri)
         end
       end
 
@@ -582,6 +585,7 @@ module SorbetView
           if path.end_with?('.rb')
             # Component .rb file — compile and notify Sorbet
             compile_component_if_needed(template_uri, source)
+            recompile_templates_for_controller(template_uri)
           else
             result = @compiler.compile(path, source)
             next if result.source_map.entries.empty? && @config.skip_missing_locals && requires_locals?(path)
@@ -597,6 +601,62 @@ module SorbetView
         end
       rescue => e
         @logger.error("FileWatcher callback error: #{e.message}")
+      end
+
+      # --- Controller → Template Recompilation ---
+
+      sig { params(uri: String).void }
+      def recompile_templates_for_controller(uri)
+        path = @uri_mapper.uri_to_path(uri)
+        return unless path.end_with?('_controller.rb')
+
+        controller_relative = extract_controller_relative_path(path)
+        return unless controller_relative
+
+        @logger.debug("Controller changed: #{path} → recompiling templates for #{controller_relative}")
+        @compiler.invalidate_ivar_cache!
+
+        @config.input_dirs.each do |input_dir|
+          view_dir = File.join(input_dir, controller_relative)
+          next unless Dir.exist?(view_dir)
+
+          Dir.glob(File.join(view_dir, '**', '*.erb')).each do |template_path|
+            source = File.read(template_path)
+            result = @compiler.compile(template_path, source)
+            @output_manager.write(result)
+            @position_translator.register(template_path, result.source_map)
+            notify_sorbet_template_changed(template_path, result)
+          end
+        end
+      rescue => e
+        @logger.error("recompile_templates_for_controller error: #{e.message}")
+      end
+
+      sig { params(path: String).returns(T.nilable(String)) }
+      def extract_controller_relative_path(path)
+        match = path.match(%r{controllers/(.+)_controller\.rb\z})
+        match ? match[1] : nil
+      end
+
+      sig { params(template_path: String, result: Compiler::CompileResult).void }
+      def notify_sorbet_template_changed(template_path, result)
+        ruby_uri = @uri_mapper.path_to_uri(result.source_map.ruby_path)
+        if @sorbet_open_uris.include?(ruby_uri)
+          @sorbet.send_notification('textDocument/didChange', {
+            'textDocument' => { 'uri' => ruby_uri, 'version' => 0 },
+            'contentChanges' => [{ 'text' => result.ruby_source }]
+          })
+        else
+          @sorbet.send_notification('textDocument/didOpen', {
+            'textDocument' => {
+              'uri' => ruby_uri,
+              'languageId' => 'ruby',
+              'version' => 0,
+              'text' => result.ruby_source
+            }
+          })
+          @sorbet_open_uris.add(ruby_uri)
+        end
       end
 
       sig { params(message: T::Hash[String, T.untyped]).void }

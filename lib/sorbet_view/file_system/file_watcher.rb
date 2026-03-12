@@ -22,7 +22,7 @@ module SorbetView
 
       sig { void }
       def start
-        dirs = (@config.input_dirs + @config.component_dirs).select { |d| Dir.exist?(d) }
+        dirs = (@config.input_dirs + @config.component_dirs + @config.controller_dirs).uniq.select { |d| Dir.exist?(d) }
         return if dirs.empty?
 
         @listener = Listen.to(

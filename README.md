@@ -60,6 +60,9 @@ skip_missing_locals: true
 | `sorbet_path` | `'srb'` | Path to the Sorbet binary |
 | `typed_level` | `'true'` | Sorbet `typed` level for generated files |
 | `component_dirs` | `[]` | Directories to scan for ViewComponent files |
+| `controller_dirs` | `['app/controllers']` | Controller directories to watch for changes (LSP recompiles associated templates) |
+| `path_mapping` | `{}` | Path mapping for remote development (e.g., Docker) |
+| `sorbet_options` | `[]` | Additional options passed to Sorbet |
 
 ## Usage
 
@@ -122,11 +125,23 @@ Components using `erb_template` heredocs are automatically detected and compiled
 
 ## Tapioca integration
 
-SorbetView includes a Tapioca DSL compiler that generates RBI files for controller helper methods. Run:
+SorbetView includes a Tapioca DSL compiler that generates RBI files for controller helper methods and extracts instance variable types from controller actions using [srb_lens](https://github.com/kazzix14/srb_lens).
 
 ```bash
 bundle exec tapioca dsl
 ```
+
+This generates:
+- RBI files for helper methods
+- `.defined_ivars.json` mapping template paths to instance variable types
+
+After running `tapioca dsl`, recompile templates to apply the updated types:
+
+```bash
+bundle exec sv compile
+```
+
+When using the LSP server, templates are automatically recompiled when the corresponding controller file is saved.
 
 ## Requirements
 

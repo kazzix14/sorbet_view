@@ -13,6 +13,11 @@ module SorbetView
         @config = config
       end
 
+      sig { void }
+      def invalidate_ivar_cache!
+        @generator.invalidate_ivar_cache!
+      end
+
       sig { params(template_path: String, source: String).returns(CompileResult) }
       def compile(template_path, source)
         Perf.measure('compiler.compile') do

@@ -149,6 +149,11 @@ module SorbetView
         )
       end
 
+      sig { void }
+      def invalidate_ivar_cache!
+        @ivar_mapping = nil
+      end
+
       private
 
       # Collect @variable references from code segments

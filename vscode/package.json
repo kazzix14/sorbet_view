@@ -5,10 +5,6 @@
   "version": "0.1.1",
   "publisher": "kazzix14",
   "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/kazzix14/sorbet_view"
-  },
   "engines": {
     "vscode": "^1.91.0"
   },

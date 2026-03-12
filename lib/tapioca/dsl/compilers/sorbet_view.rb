@@ -44,17 +44,37 @@ module Tapioca
 
         private
 
-        # Generate a mapping of controller_path -> defined instance variables
-        # Used by the compiler to declare undefined ivars as NilClass
+        # Generate a mapping of template_path -> { ivar => type }
+        # Used by the compiler to declare ivars with proper types
         sig { params(controllers: T::Array[T.untyped]).void }
         def generate_ivar_mapping(controllers)
           config = ::SorbetView::Configuration.load
-          mapping = T.let({}, T::Hash[String, T::Array[String]])
+          mapping = T.let({}, T::Hash[String, T::Hash[String, String]])
+
+          # Get view directories from Rails (e.g. ["app/views"])
+          view_dirs = resolve_view_dirs
 
           controllers.each do |controller|
             path = controller.controller_path
-            ivars = extract_defined_ivars(controller)
-            mapping[path] = ivars unless ivars.empty?
+
+            controller.action_methods.each do |action_name|
+              next unless action_name.match?(/\A[a-zA-Z_][a-zA-Z0-9_]*\z/)
+
+              action_ivars = extract_ivars_from_srb_lens(controller, action_name.to_s)
+              next if action_ivars.empty?
+
+              # Template-path keys: "app/views/posts/show" => { "@post" => "Post" }
+              view_dirs.each do |vd|
+                template_key = File.join(vd, path, action_name.to_s)
+                existing = mapping[template_key]
+                if existing
+                  # Multiple actions render the same template: narrow to intersection
+                  mapping[template_key] = intersect_ivars(existing, action_ivars)
+                else
+                  mapping[template_key] = action_ivars
+                end
+              end
+            end
           end
 
           mapping_path = File.join(config.output_dir, '.defined_ivars.json')
@@ -64,14 +84,59 @@ module Tapioca
           # Non-critical: if mapping fails, all ivars default to NilClass
         end
 
-        # Extract instance variables assigned in the controller source
-        sig { params(controller: T.untyped).returns(T::Array[String]) }
-        def extract_defined_ivars(controller)
-          source_file = "app/controllers/#{controller.controller_path}_controller.rb"
-          return [] unless File.exist?(source_file)
+        # Resolve view directories from Rails, relative to project root
+        sig { returns(T::Array[String]) }
+        def resolve_view_dirs
+          if defined?(::ActionController::Base) && ::ActionController::Base.respond_to?(:view_paths)
+            ::ActionController::Base.view_paths.paths.filter_map do |p|
+              path_str = p.to_s
+              relative = path_str.sub(%r{^#{Regexp.escape(Dir.pwd)}/?}, '')
+              relative unless relative.empty?
+            end
+          else
+            ['app/views']
+          end
+        rescue StandardError
+          ['app/views']
+        end
 
-          source = File.read(source_file)
-          source.scan(/(?<!@)@([a-zA-Z_]\w*)\s*(?:=|\|\|=)/).map { |m| "@#{m[0]}" }.uniq.sort
+        # Intersect two ivar mappings: keep only ivars present in both, narrow types with T.all
+        sig { params(a: T::Hash[String, String], b: T::Hash[String, String]).returns(T::Hash[String, String]) }
+        def intersect_ivars(a, b)
+          common_keys = a.keys & b.keys
+          result = T.let({}, T::Hash[String, String])
+          common_keys.each do |key|
+            type_a = T.must(a[key])
+            type_b = T.must(b[key])
+            result[key] = if type_a == type_b
+              type_a
+            else
+              "T.all(#{type_a}, #{type_b})"
+            end
+          end
+          result
+        end
+
+        # Extract instance variables and their types from srb-lens for a controller action
+        sig { params(controller: T.untyped, action_name: String).returns(T::Hash[String, String]) }
+        def extract_ivars_from_srb_lens(controller, action_name)
+          methods = @project.find_methods("#{controller.name}##{action_name}")
+          method_info = methods&.first
+          return {} unless method_info
+
+          ivars = method_info.ivars
+          return {} if ivars.nil? || ivars.empty?
+
+          result = T.let({}, T::Hash[String, String])
+          ivars.each do |ivar|
+            name = ivar.name
+            type = ivar.type
+            next if name.nil? || name.empty?
+            next if type.nil? || type.empty?
+
+            result[name] = type
+          end
+          result
         end
 
         sig { void }

@@ -89,10 +89,14 @@ module SorbetView
         method_args = component_mode ? '' : (locals || '()')
         lines << "  def __sorbet_view_render#{method_args}"
 
-        # Declare undefined instance variables as NilClass
-        undefined_ivars = find_undefined_ivars(code_segments, context, config, component_mode)
-        undefined_ivars.each do |ivar|
-          lines << "    #{ivar} = T.let(nil, NilClass)"
+        # Declare instance variables with types from srb-lens (or NilClass for unknown)
+        resolved_ivars = resolve_ivar_types(code_segments, context, config, component_mode)
+        resolved_ivars.each do |ivar, type|
+          if type == 'NilClass'
+            lines << "    #{ivar} = T.let(nil, NilClass)"
+          else
+            lines << "    #{ivar} = T.let(T.unsafe(nil), #{type})"
+          end
         end
 
         # Body: extracted Ruby code
@@ -153,26 +157,32 @@ module SorbetView
         segments.flat_map { |seg| seg.code.scan(/(?<!@)@[a-zA-Z_]\w*/) }.uniq.sort
       end
 
-      # Find instance variables used in the template but not defined
+      # Resolve types for all instance variables used in the template
+      # Returns [["@var", "Type"], ...] — defined ivars get their srb-lens type, undefined get NilClass
       sig do
         params(
           segments: T::Array[RubySegment],
           context: TemplateContext,
           config: Configuration,
           component_mode: T::Boolean
-        ).returns(T::Array[String])
+        ).returns(T::Array[[String, String]])
       end
-      def find_undefined_ivars(segments, context, config, component_mode)
+      def resolve_ivar_types(segments, context, config, component_mode)
         all_ivars = collect_ivars(segments)
         return [] if all_ivars.empty?
 
-        defined_ivars = if component_mode
-          load_component_defined_ivars(context.template_path)
+        if component_mode
+          # Component mode: ivars defined in source are omitted, undefined get NilClass
+          defined_ivars = load_component_defined_ivars(context.template_path)
+          (all_ivars - defined_ivars).map { |ivar| [ivar, 'NilClass'] }
         else
-          load_view_defined_ivars(context.template_path, config)
+          # View mode: use typed ivar mapping from srb-lens
+          ivar_types = load_view_ivar_types(context.template_path, config)
+          all_ivars.map do |ivar|
+            type = ivar_types[ivar]
+            [ivar, type || 'NilClass']
+          end
         end
-
-        all_ivars - defined_ivars
       end
 
       # Scan the component .rb source for @var = assignments
@@ -184,27 +194,24 @@ module SorbetView
         source.scan(/(?<!@)@([a-zA-Z_]\w*)\s*(?:=|\|\|=)/).map { |m| "@#{m[0]}" }.uniq
       end
 
-      # Load defined ivars from the Tapioca-generated mapping for views
-      sig { params(template_path: String, config: Configuration).returns(T::Array[String]) }
-      def load_view_defined_ivars(template_path, config)
+      # Load ivar type mapping from the Tapioca-generated JSON
+      # Returns { "@var" => "Type" } for the matching template
+      sig { params(template_path: String, config: Configuration).returns(T::Hash[String, String]) }
+      def load_view_ivar_types(template_path, config)
         mapping_path = File.join(config.output_dir, '.defined_ivars.json')
-        return [] unless File.exist?(mapping_path)
+        return {} unless File.exist?(mapping_path)
 
-        @ivar_mapping = T.let(@ivar_mapping, T.nilable(T::Hash[String, T::Array[String]]))
+        @ivar_mapping = T.let(@ivar_mapping, T.nilable(T::Hash[String, T::Hash[String, String]]))
         @ivar_mapping ||= begin
           JSON.parse(File.read(mapping_path))
         rescue JSON::ParserError
           {}
         end
 
-        # Derive controller_path from template_path
-        # app/views/posts/show.html.erb → posts
-        # app/views/admin_area/v21/booths/show.html.erb → admin_area/v21/booths
-        controller_path = template_path
-          .sub(%r{^app/views/}, '')
-          .sub(%r{/[^/]+$}, '') # strip filename
-
-        @ivar_mapping[controller_path] || []
+        # Lookup by template path (without extensions)
+        # "app/views/posts/show.html.erb" → "app/views/posts/show"
+        template_key = template_path.sub(/\..*\z/, '')
+        @ivar_mapping[template_key] || {}
       end
     end
   end

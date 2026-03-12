@@ -48,4 +48,52 @@ class TemplateContextTest < Minitest::Test
 
     assert_includes ctx.includes, 'Pagy::Frontend'
   end
+
+  def test_custom_input_dirs_controller_view
+    config = SorbetView::Configuration.new(input_dirs: ['custom/views'])
+    ctx = SorbetView::Compiler::TemplateContext.resolve('custom/views/users/show.html.erb', config)
+
+    assert_equal 'SorbetView::Generated::Users::Show', ctx.class_name
+    assert_includes ctx.includes, '::ActionView::Helpers'
+    assert_includes ctx.includes, '::ApplicationController::HelperMethods'
+  end
+
+  def test_custom_input_dirs_layout
+    config = SorbetView::Configuration.new(input_dirs: ['custom/views'])
+    ctx = SorbetView::Compiler::TemplateContext.resolve('custom/views/layouts/application.html.erb', config)
+
+    assert_equal 'SorbetView::Generated::Layouts::Application', ctx.class_name
+    assert_includes ctx.includes, '::ActionView::Helpers'
+  end
+
+  def test_custom_input_dirs_partial
+    config = SorbetView::Configuration.new(input_dirs: ['custom/views'])
+    ctx = SorbetView::Compiler::TemplateContext.resolve('custom/views/users/_card.html.erb', config)
+
+    assert_equal 'SorbetView::Generated::Users::Card', ctx.class_name
+  end
+
+  def test_custom_input_dirs_nested
+    config = SorbetView::Configuration.new(input_dirs: ['custom/views'])
+    ctx = SorbetView::Compiler::TemplateContext.resolve('custom/views/admin/users/index.html.erb', config)
+
+    assert_equal 'SorbetView::Generated::Admin::Users::Index', ctx.class_name
+  end
+
+  # input_dirs: ['app/'] with views under app/views/ — strips both app/ and views/
+  def test_input_dir_parent_of_views
+    config = SorbetView::Configuration.new(input_dirs: ['app/'])
+    ctx = SorbetView::Compiler::TemplateContext.resolve('app/views/users/show.html.erb', config)
+
+    assert_equal 'SorbetView::Generated::Users::Show', ctx.class_name
+    assert_includes ctx.includes, '::ActionView::Helpers'
+    assert_includes ctx.includes, '::ApplicationController::HelperMethods'
+  end
+
+  def test_input_dir_parent_of_views_layout
+    config = SorbetView::Configuration.new(input_dirs: ['app/'])
+    ctx = SorbetView::Compiler::TemplateContext.resolve('app/views/layouts/application.html.erb', config)
+
+    assert_equal 'SorbetView::Generated::Layouts::Application', ctx.class_name
+  end
 end

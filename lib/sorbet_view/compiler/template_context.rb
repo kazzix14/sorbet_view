@@ -32,7 +32,7 @@ module SorbetView
       sig { params(template_path: String, config: Configuration).returns(TemplateContext) }
       def self.resolve(template_path, config)
         ruby_path = File.join(config.output_dir, "#{template_path}.rb")
-        classification = classify(template_path)
+        classification = classify(template_path, config)
 
         case classification
         when :mailer_view
@@ -53,29 +53,46 @@ module SorbetView
 
         private
 
-        sig { params(path: String).returns(Symbol) }
-        def classify(path)
+        # Strip the matching input_dir prefix from a template path
+        # "app/views/users/show.html.erb" → "users/show.html.erb"
+        # "app/users/show.html.erb" (input_dirs: ['app/']) → "users/show.html.erb"
+        sig { params(path: String, config: Configuration).returns(String) }
+        def strip_input_dir(path, config)
+          config.input_dirs.each do |dir|
+            prefix = dir.end_with?('/') ? dir : "#{dir}/"
+            if path.start_with?(prefix)
+              relative = path.delete_prefix(prefix)
+              # Also strip "views/" if the input_dir didn't include it
+              # e.g. input_dirs: ['app/'] with path 'app/views/users/show.html.erb'
+              relative = relative.delete_prefix('views/') if relative.start_with?('views/')
+              return relative
+            end
+          end
+          path
+        end
+
+        sig { params(path: String, config: Configuration).returns(Symbol) }
+        def classify(path, config)
           basename = File.basename(path)
+          relative = strip_input_dir(path, config)
 
           if path.include?('_mailer/') || path.include?('mailers/')
             :mailer_view
-          elsif path.include?('app/views/layouts/')
+          elsif relative.start_with?('layouts/')
             :layout
           elsif basename.start_with?('_')
             :partial
-          elsif path.include?('app/views/')
+          elsif relative != path
+            # input_dir prefix was stripped → this is a view under input_dirs
             :controller_view
           else
             :generic
           end
         end
 
-        sig { params(path: String).returns(String) }
-        def path_to_class_name(path)
-          # /abs/path/app/views/users/show.html.erb -> Users::Show
-          relative = path
-            .sub(%r{.*app/views/}, '')
-            .sub(%r{.*app/}, '')
+        sig { params(path: String, config: Configuration).returns(String) }
+        def path_to_class_name(path, config)
+          relative = strip_input_dir(path, config)
           basename = File.basename(relative).sub(/\..*$/, '') # strip all extensions
           basename = basename.delete_prefix('_') # strip partial prefix
           dir = File.dirname(relative)
@@ -97,7 +114,7 @@ module SorbetView
         sig { params(path: String, ruby_path: String, config: Configuration).returns(TemplateContext) }
         def resolve_controller_view(path, ruby_path, config)
           new(
-            class_name: "SorbetView::Generated::#{path_to_class_name(path)}",
+            class_name: "SorbetView::Generated::#{path_to_class_name(path, config)}",
             superclass: nil,
             includes: [
               '::ActionView::Helpers',
@@ -112,7 +129,7 @@ module SorbetView
         sig { params(path: String, ruby_path: String, config: Configuration).returns(TemplateContext) }
         def resolve_mailer_view(path, ruby_path, config)
           new(
-            class_name: "SorbetView::Generated::#{path_to_class_name(path)}",
+            class_name: "SorbetView::Generated::#{path_to_class_name(path, config)}",
             superclass: nil,
             includes: [
               '::ActionView::Helpers',
@@ -127,7 +144,7 @@ module SorbetView
         sig { params(path: String, ruby_path: String, config: Configuration).returns(TemplateContext) }
         def resolve_layout(path, ruby_path, config)
           new(
-            class_name: "SorbetView::Generated::#{path_to_class_name(path)}",
+            class_name: "SorbetView::Generated::#{path_to_class_name(path, config)}",
             superclass: nil,
             includes: [
               '::ActionView::Helpers',
@@ -142,7 +159,7 @@ module SorbetView
         sig { params(path: String, ruby_path: String, config: Configuration).returns(TemplateContext) }
         def resolve_partial(path, ruby_path, config)
           new(
-            class_name: "SorbetView::Generated::#{path_to_class_name(path)}",
+            class_name: "SorbetView::Generated::#{path_to_class_name(path, config)}",
             superclass: nil,
             includes: [
               '::ActionView::Helpers',
@@ -157,7 +174,7 @@ module SorbetView
         sig { params(path: String, ruby_path: String, config: Configuration).returns(TemplateContext) }
         def resolve_generic(path, ruby_path, config)
           new(
-            class_name: "SorbetView::Generated::#{path_to_class_name(path)}",
+            class_name: "SorbetView::Generated::#{path_to_class_name(path, config)}",
             superclass: nil,
             includes: config.extra_includes,
             template_path: path,

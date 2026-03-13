@@ -151,18 +151,28 @@ module Tapioca
           config = ::SorbetView::Configuration.load
           compiler = ::SorbetView::Compiler::TemplateCompiler.new(config: config)
           output_manager = ::SorbetView::FileSystem::OutputManager.new(config.output_dir)
+          compiled_ruby_paths = Set.new
 
           templates = ::SorbetView::FileSystem::ProjectScanner.scan(config)
           templates.each do |path|
             result = compiler.compile_file(path)
             output_manager.write(result)
+            compiled_ruby_paths << result.source_map.ruby_path
           end
 
           component_compiler = ::SorbetView::Compiler::ComponentCompiler.new(config: config)
           components = ::SorbetView::FileSystem::ProjectScanner.scan_components(config)
           components.each do |path|
             results = component_compiler.compile_file(path)
-            results.each { |result| output_manager.write(result) }
+            results.each do |result|
+              output_manager.write(result)
+              compiled_ruby_paths << result.source_map.ruby_path
+            end
+          end
+
+          # Clean stale compiled files
+          Dir.glob(File.join(config.output_dir, '**', '*.rb')).each do |f|
+            File.delete(f) unless compiled_ruby_paths.include?(f)
           end
         rescue StandardError => e
           $stderr.puts "[SorbetView] compile_all_templates failed: #{e.class}: #{e.message}"

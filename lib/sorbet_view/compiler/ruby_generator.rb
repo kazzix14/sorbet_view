@@ -86,18 +86,23 @@ module SorbetView
           end
         end
 
+        # Declare instance variables in initialize (avoids Sorbet 5005)
+        resolved_ivars = resolve_ivar_types(code_segments, context, config, component_mode)
+        unless resolved_ivars.empty? || component_mode
+          lines << '  def initialize'
+          resolved_ivars.each do |ivar, type|
+            if type == 'NilClass'
+              lines << "    #{ivar} = T.let(nil, NilClass)"
+            else
+              lines << "    #{ivar} = T.let(T.unsafe(nil), #{type})"
+            end
+          end
+          lines << '  end'
+          lines << ''
+        end
+
         method_args = component_mode ? '' : (locals || '()')
         lines << "  def __sorbet_view_render#{method_args}"
-
-        # Declare instance variables with types from srb-lens (or NilClass for unknown)
-        resolved_ivars = resolve_ivar_types(code_segments, context, config, component_mode)
-        resolved_ivars.each do |ivar, type|
-          if type == 'NilClass'
-            lines << "    #{ivar} = T.let(nil, NilClass)"
-          else
-            lines << "    #{ivar} = T.let(T.unsafe(nil), #{type})"
-          end
-        end
 
         # Body: extracted Ruby code
         code_segments.each do |seg|

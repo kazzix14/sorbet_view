@@ -61,18 +61,27 @@ module SorbetView
 
           erb_block = class_name.include?('ERBBlockNode') ||
                       class_name.include?('ERBIfNode') || class_name.include?('ERBUnlessNode') ||
-                      class_name.include?('ERBCaseNode') || class_name.include?('ERBForNode') ||
+                      class_name.include?('ERBCaseNode') || class_name.include?('ERBCaseMatchNode') ||
+                      class_name.include?('ERBForNode') ||
                       class_name.include?('ERBWhileNode') || class_name.include?('ERBUntilNode') ||
                       class_name.include?('ERBBeginNode')
 
           erb_clause = class_name.include?('ERBElsifNode') || class_name.include?('ERBElseNode') ||
-                       class_name.include?('ERBWhenNode') || class_name.include?('ERBRescueNode') ||
+                       class_name.include?('ERBWhenNode') || class_name.include?('ERBInNode') ||
+                       class_name.include?('ERBRescueNode') ||
                        class_name.include?('ERBEnsureNode')
 
           if erb_block || erb_clause
             add_herb_segment(node, segments)
             node.statements.each { |s| visit_herb_node(s, segments) } if node.respond_to?(:statements)
             node.body.each { |s| visit_herb_node(s, segments) } if node.respond_to?(:body)
+            # case/when: conditions is an array of ERBWhenNode, else_clause is ERBElseNode
+            if node.respond_to?(:conditions) && node.conditions
+              node.conditions.each { |c| visit_herb_node(c, segments) }
+            end
+            if node.respond_to?(:else_clause) && node.else_clause
+              visit_herb_node(node.else_clause, segments)
+            end
             visit_herb_node(node.subsequent, segments) if node.respond_to?(:subsequent) && node.subsequent
             add_herb_end_segment(node.end_node, segments) if erb_block && node.respond_to?(:end_node) && node.end_node
             return

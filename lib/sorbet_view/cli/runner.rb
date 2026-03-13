@@ -100,6 +100,8 @@ module SorbetView
           templates = FileSystem::ProjectScanner.scan(config)
           puts "Compiling #{templates.length} template(s)..."
 
+          compiled_ruby_paths = T.let(Set.new, T::Set[String])
+
           templates.each do |path|
             result = compiler.compile_file(path)
 
@@ -108,6 +110,7 @@ module SorbetView
             end
 
             output_manager.write(result)
+            compiled_ruby_paths << result.source_map.ruby_path
             puts "  #{path} -> #{result.source_map.ruby_path}"
           end
 
@@ -119,9 +122,17 @@ module SorbetView
               results = component_compiler.compile_file(path)
               results.each do |result|
                 output_manager.write(result)
+                compiled_ruby_paths << result.source_map.ruby_path
                 puts "  #{path} -> #{result.source_map.ruby_path}"
               end
             end
+          end
+
+          # Clean stale compiled files
+          stale = Dir.glob(File.join(config.output_dir, '**', '*.rb')).reject { |f| compiled_ruby_paths.include?(f) }
+          stale.each do |f|
+            File.delete(f)
+            puts "  Removed stale: #{f}"
           end
 
           total_ms = (Process.clock_gettime(Process::CLOCK_MONOTONIC) - total_start) * 1000.0

@@ -636,6 +636,8 @@ module SorbetView
         removed.each do |path|
           @logger.debug("File removed: #{path}")
           @position_translator.unregister(path)
+          @output_manager.delete(path)
+          notify_sorbet_file_removed(path)
         end
       rescue => e
         @logger.error("FileWatcher callback error: #{e.message}")
@@ -695,6 +697,18 @@ module SorbetView
           })
           @sorbet_open_uris.add(ruby_uri)
         end
+      end
+
+      sig { params(template_path: String).void }
+      def notify_sorbet_file_removed(template_path)
+        ruby_path = File.join(@config.output_dir, "#{template_path}.rb")
+        ruby_uri = @uri_mapper.path_to_uri(ruby_path)
+        return unless @sorbet_open_uris.include?(ruby_uri)
+
+        @sorbet.send_notification('textDocument/didClose', {
+          'textDocument' => { 'uri' => ruby_uri }
+        })
+        @sorbet_open_uris.delete(ruby_uri)
       end
 
       sig { params(message: T::Hash[String, T.untyped]).void }

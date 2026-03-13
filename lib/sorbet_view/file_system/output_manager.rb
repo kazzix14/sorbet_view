@@ -31,6 +31,13 @@ module SorbetView
         end
       end
 
+      # Delete the compiled output for a given template path
+      sig { params(template_path: String).void }
+      def delete(template_path)
+        ruby_path = File.join(@output_dir, "#{template_path}.rb")
+        File.delete(ruby_path) if File.exist?(ruby_path)
+      end
+
       sig { void }
       def clean
         FileUtils.rm_rf(@output_dir)

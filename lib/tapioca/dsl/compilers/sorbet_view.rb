@@ -40,6 +40,7 @@ module Tapioca
 
           generate_ivar_mapping(controllers)
           process_components
+          compile_all_templates
         end
 
         private
@@ -80,17 +81,22 @@ module Tapioca
           mapping_path = File.join(config.output_dir, '.defined_ivars.json')
           FileUtils.mkdir_p(File.dirname(mapping_path))
           File.write(mapping_path, JSON.pretty_generate(mapping))
-        rescue StandardError
-          # Non-critical: if mapping fails, all ivars default to NilClass
+        rescue StandardError => e
+          $stderr.puts "[SorbetView] generate_ivar_mapping failed: #{e.class}: #{e.message}"
+          $stderr.puts e.backtrace&.first(5)&.join("\n")
         end
 
         # Resolve view directories from Rails, relative to project root
+        # Only include directories within the project (exclude gem paths)
         sig { returns(T::Array[String]) }
         def resolve_view_dirs
           if defined?(::ActionController::Base) && ::ActionController::Base.respond_to?(:view_paths)
+            cwd = Dir.pwd
             ::ActionController::Base.view_paths.paths.filter_map do |p|
               path_str = p.to_s
-              relative = path_str.sub(%r{^#{Regexp.escape(Dir.pwd)}/?}, '')
+              next unless path_str.start_with?(cwd)
+
+              relative = path_str.sub(%r{^#{Regexp.escape(cwd)}/?}, '')
               relative unless relative.empty?
             end
           else
@@ -134,9 +140,32 @@ module Tapioca
             next if name.nil? || name.empty?
             next if type.nil? || type.empty?
 
-            result[name] = type
+            result[name] = normalize_type(type)
           end
           result
+        end
+
+        # Compile all templates after generating ivar mapping
+        sig { void }
+        def compile_all_templates
+          config = ::SorbetView::Configuration.load
+          compiler = ::SorbetView::Compiler::TemplateCompiler.new(config: config)
+          output_manager = ::SorbetView::FileSystem::OutputManager.new(config.output_dir)
+
+          templates = ::SorbetView::FileSystem::ProjectScanner.scan(config)
+          templates.each do |path|
+            result = compiler.compile_file(path)
+            output_manager.write(result)
+          end
+
+          component_compiler = ::SorbetView::Compiler::ComponentCompiler.new(config: config)
+          components = ::SorbetView::FileSystem::ProjectScanner.scan_components(config)
+          components.each do |path|
+            results = component_compiler.compile_file(path)
+            results.each { |result| output_manager.write(result) }
+          end
+        rescue StandardError => e
+          $stderr.puts "[SorbetView] compile_all_templates failed: #{e.class}: #{e.message}"
         end
 
         sig { void }
@@ -285,6 +314,13 @@ module Tapioca
           end
         rescue NameError
           []
+        end
+
+        # Normalize Sorbet literal types to their base types
+        # e.g. String("test") → String, Integer(42) → Integer, Symbol(:foo) → Symbol
+        sig { params(type: String).returns(String) }
+        def normalize_type(type)
+          type.gsub(/\b([A-Z]\w*)\(.*?\)/) { $1 }
         end
 
         sig { params(str: String).returns(String) }

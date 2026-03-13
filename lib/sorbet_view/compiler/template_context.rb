@@ -108,7 +108,7 @@ module SorbetView
 
         sig { params(str: String).returns(String) }
         def camelize(str)
-          str.split('_').map(&:capitalize).join
+          str.split(/[_\-]/).map(&:capitalize).join
         end
 
         sig { params(path: String, ruby_path: String, config: Configuration).returns(TemplateContext) }

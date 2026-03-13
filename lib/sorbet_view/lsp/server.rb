@@ -1,6 +1,7 @@
 # typed: strict
 # frozen_string_literal: true
 
+require 'listen'
 require 'logger'
 require 'set'
 
@@ -44,6 +45,7 @@ module SorbetView
         @logger.error("Server error: #{e.message}\n#{e.backtrace&.join("\n")}")
       ensure
         @file_watcher&.stop
+        @ivar_json_watcher&.stop
         @sorbet.stop
         @logger.info('SorbetView LSP server stopped')
       end
@@ -568,8 +570,44 @@ module SorbetView
         end
         @file_watcher.start
         @logger.info("FileWatcher started for: #{@config.input_dirs.join(', ')}")
+
+        start_ivar_json_watcher
       rescue => e
         @logger.warn("Failed to start FileWatcher: #{e.message}")
+      end
+
+      sig { void }
+      def start_ivar_json_watcher
+        json_path = File.join(@config.output_dir, '.defined_ivars.json')
+        dir = File.dirname(json_path)
+        return unless Dir.exist?(dir)
+
+        @ivar_json_watcher = T.let(nil, T.untyped)
+        @ivar_json_watcher = Listen.to(dir, only: /\.defined_ivars\.json$/) do |modified, added, _removed|
+          next if (modified + added).empty?
+
+          @logger.info('.defined_ivars.json changed — recompiling all templates')
+          @compiler.invalidate_ivar_cache!
+          recompile_all_templates
+        end
+        @ivar_json_watcher.start
+        @logger.info("Watching #{json_path} for ivar mapping changes")
+      rescue => e
+        @logger.warn("Failed to start ivar JSON watcher: #{e.message}")
+      end
+
+      sig { void }
+      def recompile_all_templates
+        templates = FileSystem::ProjectScanner.scan(@config)
+        templates.each do |path|
+          source = File.read(path)
+          result = @compiler.compile(path, source)
+          @output_manager.write(result)
+          @position_translator.register(path, result.source_map)
+          notify_sorbet_template_changed(path, result)
+        end
+      rescue => e
+        @logger.error("recompile_all_templates error: #{e.message}")
       end
 
       sig { params(modified: T::Array[String], added: T::Array[String], removed: T::Array[String]).void }

@@ -12,8 +12,7 @@ class TemplateContextTest < Minitest::Test
     ctx = SorbetView::Compiler::TemplateContext.resolve('app/views/users/show.html.erb', @config)
 
     assert_equal 'SorbetView::Generated::Users::Show', ctx.class_name
-    assert_nil ctx.superclass
-    assert_includes ctx.includes, '::ActionView::Helpers'
+    assert_equal '::ActionView::Base', ctx.superclass
     assert_includes ctx.includes, '::ApplicationController::HelperMethods'
   end
 
@@ -21,13 +20,14 @@ class TemplateContextTest < Minitest::Test
     ctx = SorbetView::Compiler::TemplateContext.resolve('app/views/users/_card.html.erb', @config)
 
     assert_equal 'SorbetView::Generated::Users::Card', ctx.class_name
+    assert_equal '::ActionView::Base', ctx.superclass
   end
 
   def test_layout
     ctx = SorbetView::Compiler::TemplateContext.resolve('app/views/layouts/application.html.erb', @config)
 
     assert_equal 'SorbetView::Generated::Layouts::Application', ctx.class_name
-    assert_includes ctx.includes, '::ActionView::Helpers'
+    assert_equal '::ActionView::Base', ctx.superclass
   end
 
   def test_nested_path
@@ -54,7 +54,7 @@ class TemplateContextTest < Minitest::Test
     ctx = SorbetView::Compiler::TemplateContext.resolve('custom/views/users/show.html.erb', config)
 
     assert_equal 'SorbetView::Generated::Users::Show', ctx.class_name
-    assert_includes ctx.includes, '::ActionView::Helpers'
+    assert_equal '::ActionView::Base', ctx.superclass
     assert_includes ctx.includes, '::ApplicationController::HelperMethods'
   end
 
@@ -63,7 +63,7 @@ class TemplateContextTest < Minitest::Test
     ctx = SorbetView::Compiler::TemplateContext.resolve('custom/views/layouts/application.html.erb', config)
 
     assert_equal 'SorbetView::Generated::Layouts::Application', ctx.class_name
-    assert_includes ctx.includes, '::ActionView::Helpers'
+    assert_equal '::ActionView::Base', ctx.superclass
   end
 
   def test_custom_input_dirs_partial
@@ -86,7 +86,7 @@ class TemplateContextTest < Minitest::Test
     ctx = SorbetView::Compiler::TemplateContext.resolve('app/views/users/show.html.erb', config)
 
     assert_equal 'SorbetView::Generated::Users::Show', ctx.class_name
-    assert_includes ctx.includes, '::ActionView::Helpers'
+    assert_equal '::ActionView::Base', ctx.superclass
     assert_includes ctx.includes, '::ApplicationController::HelperMethods'
   end
 

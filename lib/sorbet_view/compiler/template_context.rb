@@ -115,9 +115,8 @@ module SorbetView
         def resolve_controller_view(path, ruby_path, config)
           new(
             class_name: "SorbetView::Generated::#{path_to_class_name(path, config)}",
-            superclass: nil,
+            superclass: '::ActionView::Base',
             includes: [
-              '::ActionView::Helpers',
               '::ApplicationController::HelperMethods',
               *config.extra_includes
             ],
@@ -130,9 +129,8 @@ module SorbetView
         def resolve_mailer_view(path, ruby_path, config)
           new(
             class_name: "SorbetView::Generated::#{path_to_class_name(path, config)}",
-            superclass: nil,
+            superclass: '::ActionView::Base',
             includes: [
-              '::ActionView::Helpers',
               '::ActionMailer::Base',
               *config.extra_includes
             ],
@@ -145,9 +143,8 @@ module SorbetView
         def resolve_layout(path, ruby_path, config)
           new(
             class_name: "SorbetView::Generated::#{path_to_class_name(path, config)}",
-            superclass: nil,
+            superclass: '::ActionView::Base',
             includes: [
-              '::ActionView::Helpers',
               '::ApplicationController::HelperMethods',
               *config.extra_includes
             ],
@@ -160,9 +157,8 @@ module SorbetView
         def resolve_partial(path, ruby_path, config)
           new(
             class_name: "SorbetView::Generated::#{path_to_class_name(path, config)}",
-            superclass: nil,
+            superclass: '::ActionView::Base',
             includes: [
-              '::ActionView::Helpers',
               '::ApplicationController::HelperMethods',
               *config.extra_includes
             ],

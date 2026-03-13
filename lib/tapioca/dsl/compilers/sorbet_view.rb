@@ -78,9 +78,12 @@ module Tapioca
             end
           end
 
+          # Sort keys for deterministic output
+          sorted = mapping.sort.to_h.transform_values { |ivars| ivars.sort.to_h }
+
           mapping_path = File.join(config.output_dir, '.defined_ivars.json')
           FileUtils.mkdir_p(File.dirname(mapping_path))
-          File.write(mapping_path, JSON.pretty_generate(mapping))
+          File.write(mapping_path, JSON.pretty_generate(sorted))
         rescue StandardError => e
           $stderr.puts "[SorbetView] generate_ivar_mapping failed: #{e.class}: #{e.message}"
           $stderr.puts e.backtrace&.first(5)&.join("\n")

@@ -174,16 +174,19 @@ module SorbetView
       end
       def resolve_ivar_types(segments, context, config, component_mode)
         all_ivars = collect_ivars(segments)
-        return [] if all_ivars.empty?
 
         if component_mode
+          return [] if all_ivars.empty?
           # Component mode: ivars defined in source are omitted, undefined get NilClass
           defined_ivars = load_component_defined_ivars(context.template_path)
           (all_ivars - defined_ivars).map { |ivar| [ivar, 'NilClass'] }
         else
           # View mode: use typed ivar mapping from srb-lens
           ivar_types = load_view_ivar_types(context.template_path, config)
-          all_ivars.map do |ivar|
+          # Include all ivars: those used in the template + those defined in the controller
+          combined_ivars = (all_ivars + ivar_types.keys).uniq.sort
+          return [] if combined_ivars.empty?
+          combined_ivars.map do |ivar|
             type = ivar_types[ivar]
             [ivar, type || 'NilClass']
           end

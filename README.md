@@ -61,7 +61,7 @@ skip_missing_locals: true
 | `typed_level` | `'true'` | Sorbet `typed` level for generated files |
 | `component_dirs` | `[]` | Directories to scan for ViewComponent files |
 | `controller_dirs` | `['app/controllers']` | Controller directories to watch for changes (LSP recompiles associated templates) |
-| `path_mapping` | `{}` | Path mapping for remote development (e.g., Docker) |
+
 | `sorbet_options` | `[]` | Additional options passed to Sorbet |
 
 ## Usage

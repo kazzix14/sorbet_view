@@ -99,6 +99,9 @@ module SorbetView
 
       sig { params(message: T::Hash[String, T.untyped]).void }
       def handle_initialize(message)
+        # Auto-detect path mapping from editor's rootUri
+        detect_root_mapping(message['params'])
+
         # Compile all templates first
         compile_all_templates
 
@@ -139,6 +142,25 @@ module SorbetView
       def handle_shutdown(message)
         @sorbet.send_request('shutdown', nil)
         @transport.send_response(message['id'], nil)
+      end
+
+      sig { params(params: T.nilable(T::Hash[String, T.untyped])).void }
+      def detect_root_mapping(params)
+        return unless params
+
+        root_uri = params['rootUri'] || params['rootPath']
+        return unless root_uri
+
+        editor_root = if root_uri.start_with?('file://')
+          URI.decode_www_form_component(URI.parse(root_uri).path || '')
+        else
+          root_uri
+        end
+        return if editor_root.empty?
+
+        local_root = Dir.pwd
+        @uri_mapper.set_roots(editor_root: editor_root, local_root: local_root)
+        @logger.info("Root mapping: editor=#{editor_root} local=#{local_root}")
       end
 
       # --- Document Sync ---

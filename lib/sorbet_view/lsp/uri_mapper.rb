@@ -14,8 +14,17 @@ module SorbetView
       sig { params(config: Configuration).void }
       def initialize(config:)
         @output_dir = config.output_dir
-        # path_mapping: { "/host/path" => "/container/path" }
-        @path_mapping = T.let(config.path_mapping, T::Hash[String, String])
+        @editor_root = T.let(nil, T.nilable(String))
+        @local_root = T.let(nil, T.nilable(String))
+      end
+
+      # Auto-detect path mapping from LSP rootUri vs local working directory.
+      sig { params(editor_root: String, local_root: String).void }
+      def set_roots(editor_root:, local_root:)
+        return if editor_root == local_root
+
+        @editor_root = editor_root
+        @local_root = local_root
       end
 
       sig { params(uri: String).returns(T::Boolean) }
@@ -73,12 +82,9 @@ module SorbetView
         else
           uri
         end
-        # Map host path -> local (container) path
-        @path_mapping.each do |from, to|
-          if path.start_with?(from)
-            path = path.sub(from, to)
-            break
-          end
+        # Map editor root -> local root
+        if @editor_root && @local_root && path.start_with?(@editor_root)
+          path = path.sub(@editor_root, @local_root)
         end
         # Make relative to CWD
         cwd = Dir.pwd
@@ -91,12 +97,9 @@ module SorbetView
       sig { params(path: String).returns(String) }
       def path_to_uri(path)
         absolute = File.expand_path(path)
-        # Map local (container) path -> host path
-        @path_mapping.each do |from, to|
-          if absolute.start_with?(to)
-            absolute = absolute.sub(to, from)
-            break
-          end
+        # Map local root -> editor root
+        if @editor_root && @local_root && absolute.start_with?(@local_root)
+          absolute = absolute.sub(@local_root, @editor_root)
         end
         "file://#{URI.encode_www_form_component(absolute).gsub('%2F', '/')}"
       end

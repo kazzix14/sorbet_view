@@ -30,5 +30,5 @@ Gem::Specification.new do |spec|
   spec.add_dependency 'listen', '~> 3.0'
   spec.add_dependency 'psych'
   spec.add_dependency 'sorbet-runtime'
-  spec.add_dependency 'srb_lens', '~> 0.5.0'
+  spec.add_dependency 'srb_lens', '~> 0.5.1'
 end

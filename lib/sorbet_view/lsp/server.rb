@@ -88,7 +88,13 @@ module SorbetView
           handle_proxied_request(message)
         else
           # Pass through to Sorbet for anything else
-          forward_to_sorbet(message)
+          if message['id']
+            result = @sorbet.send_request(message['method'], message['params'])
+            sorbet_result = result&.fetch('result', nil)
+            @transport.send_response(message['id'], sorbet_result)
+          else
+            forward_to_sorbet(message)
+          end
         end
       rescue => e
         @logger.error("Error handling #{message['method']}: #{e.message}\n#{e.backtrace&.first(5)&.join("\n")}")
@@ -244,7 +250,9 @@ module SorbetView
         elsif try_handle_component_proxied_request(message, uri)
           # Handled as component heredoc
         else
-          forward_to_sorbet(message)
+          result = @sorbet.send_request(message['method'], message['params'])
+          sorbet_result = result&.fetch('result', nil)
+          @transport.send_response(message['id'], sorbet_result)
         end
       end
 

@@ -28,6 +28,9 @@ module Tapioca
           @module_cache = T.let({}, T::Hash[String, RBI::Scope])
           @project = T.let(SrbLens::Project.load_or_index(Dir.pwd), T.untyped)
 
+          # Ensure all controllers are loaded
+          Rails.application.eager_load! if defined?(Rails) && Rails.respond_to?(:application)
+
           controllers = ObjectSpace.each_object(Class).select do |klass|
             klass < ::ActionController::Base && !klass.abstract?
           rescue StandardError
@@ -238,27 +241,34 @@ module Tapioca
         sig { params(controller: T.untyped).void }
         def process_controller(controller)
           helper_methods = extract_helper_methods(controller)
-          return if helper_methods.empty?
+          controller_helper_modules = extract_controller_helper_modules(controller)
+          return if helper_methods.empty? && controller_helper_modules.empty?
 
           path = controller.controller_path
           parts = path.split('/').map { |p| camelize(p) }
 
-          # 1) module SorbetView::Helpers::<controller_path> with helper methods
-          helper_module_name = "SorbetView::Helpers::#{parts.join('::')}"
-          create_module_from_path(helper_module_name) do |mod|
-            helper_methods.each do |method_name, params, return_type|
-              mod.create_method(method_name, parameters: params, return_type: return_type)
+          # 1) module SorbetView::Helpers::<controller_path> with helper methods from helper_method macro
+          helper_module_name = nil
+          unless helper_methods.empty?
+            helper_module_name = "SorbetView::Helpers::#{parts.join('::')}"
+            create_module_from_path(helper_module_name) do |mod|
+              helper_methods.each do |method_name, params, return_type|
+                mod.create_method(method_name, parameters: params, return_type: return_type)
+              end
             end
           end
 
-          # 2) Each action's template class includes the helper module
+          # 2) Each action's template class includes the helper module and controller-specific helper modules
           actions = controller.action_methods.to_a
           actions.each do |action_name|
             next unless action_name.match?(/\A[a-zA-Z_][a-zA-Z0-9_]*\z/)
 
             class_name = "SorbetView::Generated::#{parts.join('::')}::#{camelize(action_name)}"
             create_class_from_path(class_name) do |klass|
-              klass.create_include(helper_module_name)
+              klass.create_include(helper_module_name) if helper_module_name
+              controller_helper_modules.each do |mod_name|
+                klass.create_include("::#{mod_name}")
+              end
             end
           end
         end
@@ -282,6 +292,30 @@ module Tapioca
             return_type = 'T.untyped' if return_type.empty?
 
             [name_s, params, return_type]
+          end
+        end
+
+        # Returns controller-specific helper module names (modules included via `helper` that are not in ApplicationController)
+        sig { params(controller: T.untyped).returns(T::Array[String]) }
+        def extract_controller_helper_modules(controller)
+          return [] unless controller.respond_to?(:_helpers)
+
+          base_helpers = if defined?(::ApplicationController) && ::ApplicationController.respond_to?(:_helpers)
+            ::ApplicationController._helpers.ancestors
+          else
+            []
+          end
+
+          controller_helpers = controller._helpers.ancestors
+          specific_modules = controller_helpers - base_helpers
+
+          specific_modules.filter_map do |mod|
+            next unless mod.is_a?(Module) && !mod.is_a?(Class)
+            name = mod.name
+            next if name.nil? || name.empty?
+            next if name.include?('HelperMethods')
+            next if name.start_with?('ActionController::') || name.start_with?('AbstractController::')
+            name
           end
         end
 

@@ -258,19 +258,49 @@ module Tapioca
             end
           end
 
-          # 2) Each action's template class includes the helper module and controller-specific helper modules
+          # 2) Each action's template class includes the helper module and controller-specific helper modules.
+          # Templates compile to format-nested classes (e.g. Users::Show::Html, Users::Show::TurboStream),
+          # so emit RBI for each format variant found on disk. Falls back to the action-base class
+          # when no format-suffixed templates exist.
           actions = controller.action_methods.to_a
           actions.each do |action_name|
             next unless action_name.match?(/\A[a-zA-Z_][a-zA-Z0-9_]*\z/)
 
-            class_name = "SorbetView::Generated::#{parts.join('::')}::#{camelize(action_name)}"
-            create_class_from_path(class_name) do |klass|
-              klass.create_include(helper_module_name) if helper_module_name
-              controller_helper_modules.each do |mod_name|
-                klass.create_include("::#{mod_name}")
+            base_class_name = "SorbetView::Generated::#{parts.join('::')}::#{camelize(action_name)}"
+            format_suffixes = find_template_format_suffixes(path, action_name.to_s)
+            class_names = format_suffixes.empty? ? [base_class_name] : format_suffixes.map { |fs| "#{base_class_name}::#{fs}" }
+
+            class_names.each do |class_name|
+              create_class_from_path(class_name) do |klass|
+                klass.create_include(helper_module_name) if helper_module_name
+                controller_helper_modules.each do |mod_name|
+                  klass.create_include("::#{mod_name}")
+                end
               end
             end
           end
+        end
+
+        # Scan view dirs for format suffixes of a given action's templates.
+        # e.g. ["Html", "TurboStream"] for show.html.erb + show.turbo_stream.erb.
+        # Templates with no format (e.g. show.erb) contribute no suffix — for those,
+        # callers fall back to the action-base class name.
+        sig { params(controller_path: String, action_name: String).returns(T::Array[String]) }
+        def find_template_format_suffixes(controller_path, action_name)
+          suffixes = T.let([], T::Array[String])
+
+          resolve_view_dirs.each do |vd|
+            Dir.glob(File.join(vd, controller_path, "#{action_name}.*")).each do |file|
+              fname_parts = File.basename(file).split('.')
+              next unless fname_parts.first == action_name
+              next unless fname_parts.length >= 3
+
+              middle_parts = T.must(fname_parts[1..-2])
+              suffixes << middle_parts.map { |p| camelize(p) }.join('::')
+            end
+          end
+
+          suffixes.uniq
         end
 
         # Returns [[method_name, params, return_type], ...]

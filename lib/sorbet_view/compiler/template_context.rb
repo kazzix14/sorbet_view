@@ -93,8 +93,18 @@ module SorbetView
         sig { params(path: String, config: Configuration).returns(String) }
         def path_to_class_name(path, config)
           relative = strip_input_dir(path, config)
-          basename = File.basename(relative).sub(/\..*$/, '') # strip all extensions
+          filename = File.basename(relative)
+          filename_parts = filename.split('.')
+
+          basename = T.must(filename_parts.first)
           basename = basename.delete_prefix('_') # strip partial prefix
+
+          # With 3+ parts (e.g. show.html.erb → [show, html, erb]), the last is the
+          # template handler and the middle parts are format/variant extensions.
+          # Nest them as sub-classes so show.html.erb and show.turbo_stream.erb
+          # don't collide as the same class name.
+          format_parts = filename_parts.length >= 3 ? T.must(filename_parts[1..-2]) : []
+
           dir = File.dirname(relative)
 
           parts = if dir == '.'
@@ -102,6 +112,8 @@ module SorbetView
           else
             dir.split('/') + [basename]
           end
+
+          parts += format_parts
 
           parts.map { |p| camelize(p) }.join('::')
         end

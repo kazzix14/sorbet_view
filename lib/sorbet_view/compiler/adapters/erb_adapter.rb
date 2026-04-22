@@ -97,13 +97,14 @@ module SorbetView
           return unless node.respond_to?(:content) && node.content
 
           content_token = node.content
-          code = content_token.value.to_s.strip
+          raw_value = content_token.value.to_s
+          code = raw_value.strip
           return if code.empty?
 
-          # Herb lines are 1-based, we use 0-based
+          # Herb lines are 1-based, we use 0-based; raw content begins right after
+          # the opening tag, so advance past leading whitespace stripped from `code`.
           loc = content_token.location
-          line = loc.start.line - 1
-          column = loc.start.column
+          line, column = advance_past_leading_whitespace(raw_value, loc.start.line - 1, loc.start.column)
 
           tag = node.respond_to?(:tag_opening) ? node.tag_opening.value.to_s : '<%'
           type = case tag
@@ -120,10 +121,12 @@ module SorbetView
           return unless node.respond_to?(:content) && node.content
 
           loc = node.content.location
+          raw_value = node.content.value.to_s
+          line, column = advance_past_leading_whitespace(raw_value, loc.start.line - 1, loc.start.column)
           segments << RubySegment.new(
             code: 'end',
-            line: loc.start.line - 1,
-            column: loc.start.column,
+            line: line,
+            column: column,
             type: :statement
           )
         end
@@ -137,14 +140,16 @@ module SorbetView
           source.scan(INDICATOR_PATTERN) do
             match = T.must(Regexp.last_match)
             indicator = match[1] || ''
-            code = (match[2] || '').strip
+            raw_code = match[2] || ''
+            code = raw_code.strip
             offset = T.must(match.begin(0))
 
             next if code.empty?
 
             line, column = offset_to_line_column(line_offsets, offset)
             tag_prefix_len = 2 + indicator.length
-            code_column = column + tag_prefix_len
+            content_column = column + tag_prefix_len
+            code_line, code_column = advance_past_leading_whitespace(raw_code, line, content_column)
 
             type = case indicator
             when '#' then :comment
@@ -152,7 +157,7 @@ module SorbetView
             else :statement
             end
 
-            segments << RubySegment.new(code: code, line: line, column: code_column, type: type)
+            segments << RubySegment.new(code: code, line: code_line, column: code_column, type: type)
           end
 
           segments
@@ -172,6 +177,23 @@ module SorbetView
           line = line_offsets.rindex { |o| o <= offset } || 0
           column = offset - (line_offsets[line] || 0)
           [line, column]
+        end
+
+        # Returns the (line, column) of the first non-whitespace char in raw_value,
+        # given the position where raw_value begins. Used so that stripping leading
+        # whitespace from ERB content does not desync the segment's start position.
+        sig { params(raw_value: String, line: Integer, column: Integer).returns([Integer, Integer]) }
+        def advance_past_leading_whitespace(raw_value, line, column)
+          leading = raw_value[/\A\s*/] || ''
+          return [line, column] if leading.empty?
+
+          newlines = leading.count("\n")
+          if newlines == 0
+            [line, column + leading.length]
+          else
+            last_nl = T.must(leading.rindex("\n"))
+            [line + newlines, leading.length - last_nl - 1]
+          end
         end
       end
     end

@@ -67,6 +67,36 @@ class RubyGeneratorTest < Minitest::Test
     assert_includes result.ruby_source, 'sig { params(user: User, name: String).void }'
   end
 
+  def test_source_map_preserves_indent_on_secondary_lines
+    # Multi-line ERB block whose body is indented in the template — secondary
+    # lines should map to the actual indented column, not column 0.
+    segments = [
+      SorbetView::Compiler::RubySegment.new(
+        code: "if foo\n  bar\nend",
+        line: 0,
+        column: 3,
+        type: :statement
+      )
+    ]
+
+    context = SorbetView::Compiler::TemplateContext.new(
+      class_name: 'SorbetView::Generated::Test',
+      superclass: nil,
+      includes: [],
+      template_path: 'test.html.erb',
+      ruby_path: 'sorbet/templates/test.html.erb.rb'
+    )
+
+    result = @generator.generate(segments: segments, context: context, config: @config)
+
+    entries = result.source_map.entries
+    assert_equal 3, entries.length
+    assert_equal 3, entries[0].template_range.start.column # `if foo`
+    assert_equal 2, entries[1].template_range.start.column # `bar` indent
+    assert_equal 5, entries[1].template_range.end_.column  # `bar` length 3
+    assert_equal 0, entries[2].template_range.start.column # `end`
+  end
+
   def test_generates_source_map_entries
     segments = [
       SorbetView::Compiler::RubySegment.new(code: '@title', line: 0, column: 5, type: :expression)

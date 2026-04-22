@@ -117,17 +117,19 @@ module SorbetView
 
             lines << "    #{stripped}"
 
-            # Build mapping entry
+            # Build mapping entry — for the first line we already advanced past
+            # leading whitespace in the adapter; for subsequent lines, use the
+            # actual indent of the source line so the template column matches.
             template_start_col = if i == 0
               seg.column
             else
-              0
+              code_line.length - code_line.lstrip.length
             end
 
             mapping_entries << SourceMap::MappingEntry.new(
               template_range: SourceMap::Range.new(
                 start: SourceMap::Position.new(line: seg.line + i, column: template_start_col),
-                end_: SourceMap::Position.new(line: seg.line + i, column: template_start_col + code_line.strip.length)
+                end_: SourceMap::Position.new(line: seg.line + i, column: template_start_col + stripped.length)
               ),
               ruby_range: SourceMap::Range.new(
                 start: SourceMap::Position.new(line: ruby_line, column: 4),

@@ -26,6 +26,7 @@ module Tapioca
         sig { override.void }
         def decorate
           @module_cache = T.let({}, T::Hash[String, RBI::Scope])
+          @layout_contributions = T.let({}, T::Hash[String, T::Array[T::Hash[Symbol, T.untyped]]])
           @project = T.let(SrbLens::Project.load_or_index(Dir.pwd), T.untyped)
 
           # Ensure all controllers are loaded
@@ -37,9 +38,16 @@ module Tapioca
             false
           end
 
+          # Deterministic order: ObjectSpace has no order guarantee, and "last controller wins" for
+          # shared layout classes made RBI diffs unstable. Sort by constant name; anonymous classes
+          # fall back to object_id.
+          controllers = controllers.sort_by { |c| controller_sort_key(c) }
+
           controllers.each do |controller|
             process_controller(controller)
           end
+
+          emit_merged_layout_includes
 
           generate_ivar_mapping(controllers)
           process_components
@@ -61,8 +69,8 @@ module Tapioca
           controllers.each do |controller|
             path = controller.controller_path
 
-            controller.action_methods.each do |action_name|
-              next unless action_name.match?(/\A[a-zA-Z_][a-zA-Z0-9_]*\z/)
+          controller.action_methods.to_a.sort.each do |action_name|
+            next unless action_name.match?(/\A[a-zA-Z_][a-zA-Z0-9_]*\z/)
 
               action_ivars = extract_ivars_from_srb_lens(controller, action_name.to_s)
               next if action_ivars.empty?
@@ -213,7 +221,8 @@ module Tapioca
 
         sig { params(klass: T.untyped, class_name: String).void }
         def generate_component_rbi(klass, class_name)
-          methods = klass.instance_methods(false)
+          # Instance method order is not guaranteed; sort for stable RBI.
+          methods = klass.instance_methods(false).sort
 
           method_sigs = methods.filter_map do |method_name|
             method_name_s = method_name.to_s
@@ -262,7 +271,7 @@ module Tapioca
           # Templates compile to format-nested classes (e.g. Users::Show::Html, Users::Show::TurboStream),
           # so emit RBI for each format variant found on disk. Falls back to the action-base class
           # when no format-suffixed templates exist.
-          actions = controller.action_methods.to_a
+          actions = controller.action_methods.to_a.sort
           actions.each do |action_name|
             next unless action_name.match?(/\A[a-zA-Z_][a-zA-Z0-9_]*\z/)
 
@@ -272,10 +281,7 @@ module Tapioca
 
             class_names.each do |class_name|
               create_class_from_path(class_name) do |klass|
-                klass.create_include(helper_module_name) if helper_module_name
-                controller_helper_modules.each do |mod_name|
-                  klass.create_include("::#{mod_name}")
-                end
+                apply_includes_for_action!(klass, helper_module_name, controller_helper_modules)
               end
             end
           end
@@ -287,14 +293,78 @@ module Tapioca
             class_names = format_suffixes.empty? ? [base_class_name] : format_suffixes.map { |fs| "#{base_class_name}::#{fs}" }
 
             class_names.each do |class_name|
-              create_class_from_path(class_name) do |klass|
-                klass.create_include(helper_module_name) if helper_module_name
-                controller_helper_modules.each do |mod_name|
-                  klass.create_include("::#{mod_name}")
-                end
-              end
+              contribs = T.must(@layout_contributions)[class_name] ||= []
+              contribs << {
+                controller_name: controller_sort_key(controller),
+                helper_module_name: helper_module_name,
+                controller_helper_modules: controller_helper_modules
+              }
             end
           end
+        end
+
+        # Stable sort key for controllers (anonymous classes have no #name).
+        sig { params(controller: T.untyped).returns(String) }
+        def controller_sort_key(controller)
+          (controller.name || "AnonymousController:#{controller.object_id}").to_s
+        end
+
+        # Apply include lines for a single controller's view class. Order: SorbetView::Helpers
+        # module first (if any), then controller-specific helper modules in Rails MRO order
+        # (see extract_controller_helper_modules).
+        sig do
+          params(
+            klass: T.untyped,
+            helper_module_name: T.nilable(String),
+            controller_helper_modules: T::Array[String]
+          ).void
+        end
+        def apply_includes_for_action!(klass, helper_module_name, controller_helper_modules)
+          klass.create_include(helper_module_name) if helper_module_name
+          controller_helper_modules.each do |mod_name|
+            klass.create_include("::#{mod_name}")
+          end
+        end
+
+        # Layout template classes are shared by every controller that uses the same layout.
+        # Record per-controller includes, then merge once with deterministic rules:
+        # - contributors sorted by controller_sort_key
+        # - within each contributor: helper module first, then MRO order (unchanged)
+        # - same constant name only included once: first contribution in the sorted list wins
+        #   (preserves a single stable precedence for duplicate modules).
+        sig { void }
+        def emit_merged_layout_includes
+          T.must(@layout_contributions).sort_by(&:first).each do |class_name, contribs|
+            lines = merge_layout_include_lines(contribs)
+            next if lines.empty?
+
+            create_class_from_path(class_name) do |klass_rbi|
+              lines.each { |line| klass_rbi.create_include(line) }
+            end
+          end
+        end
+
+        # Returns the exact `create_include` string for each line (unprefixed SorbetView path or ::Foo).
+        sig { params(contributions: T::Array[T::Hash[Symbol, T.untyped]]).returns(T::Array[String]) }
+        def merge_layout_include_lines(contributions)
+          seen = T.let({}, T::Hash[String, T::Boolean])
+          out = T.let([], T::Array[String])
+
+          contributions.sort_by { |c| c[:controller_name].to_s }.each do |c|
+            h = c[:helper_module_name]
+            if h && !seen[h]
+              seen[h] = true
+              out << h
+            end
+            c[:controller_helper_modules].to_a.each do |mod_name|
+              next if seen[mod_name]
+
+              seen[mod_name] = true
+              out << "::#{mod_name}"
+            end
+          end
+
+          out
         end
 
         # Scan view dirs for format suffixes of a given action's templates.
@@ -316,7 +386,7 @@ module Tapioca
             end
           end
 
-          suffixes.uniq
+          suffixes.uniq.sort
         end
 
         # Returns [[method_name, params, return_type], ...]
@@ -324,21 +394,18 @@ module Tapioca
         def extract_helper_methods(controller)
           return [] unless controller.respond_to?(:_helper_methods)
 
-          controller._helper_methods.filter_map do |name|
+          rows = controller._helper_methods.filter_map do |name|
             name_s = name.to_s
             next unless name_s.match?(/\A[a-zA-Z_][a-zA-Z0-9_]*[?!]?\z/)
 
             method_info = find_method_info(controller, name_s)
-            params = if method_info
-              build_params_from_srb_lens(method_info)
-            else
-              build_params_from_reflection(controller, name_s)
-            end
+            params = method_info ? build_params_from_srb_lens(method_info) : build_params_from_reflection(controller, name_s)
             return_type = method_info&.return_type || 'T.untyped'
             return_type = 'T.untyped' if return_type.empty?
 
             [name_s, params, return_type]
           end
+          rows.sort_by { |row| T.must(row).first }
         end
 
         # Returns controller-specific helper module names (modules included via `helper` that are not in ApplicationController)

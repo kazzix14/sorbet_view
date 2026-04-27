@@ -279,6 +279,22 @@ module Tapioca
               end
             end
           end
+
+          layout_name = controller._layout if controller.respond_to?(:_layout)
+          if layout_name.is_a?(String) && !layout_name.empty?
+            base_class_name = "SorbetView::Generated::Layouts::#{camelize(layout_name)}"
+            format_suffixes = find_template_format_suffixes('layouts', layout_name)
+            class_names = format_suffixes.empty? ? [base_class_name] : format_suffixes.map { |fs| "#{base_class_name}::#{fs}" }
+
+            class_names.each do |class_name|
+              create_class_from_path(class_name) do |klass|
+                klass.create_include(helper_module_name) if helper_module_name
+                controller_helper_modules.each do |mod_name|
+                  klass.create_include("::#{mod_name}")
+                end
+              end
+            end
+          end
         end
 
         # Scan view dirs for format suffixes of a given action's templates.

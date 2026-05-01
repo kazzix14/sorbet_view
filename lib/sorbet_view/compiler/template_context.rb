@@ -125,11 +125,12 @@ module SorbetView
 
         sig { params(path: String, ruby_path: String, config: Configuration).returns(TemplateContext) }
         def resolve_controller_view(path, ruby_path, config)
+          helper_includes = resolve_runtime_helper_includes(path, config)
           new(
             class_name: "SorbetView::Generated::#{path_to_class_name(path, config)}",
             superclass: '::ActionView::Base',
             includes: [
-              '::ApplicationController::HelperMethods',
+              *helper_includes,
               *config.extra_includes
             ],
             template_path: path,
@@ -153,11 +154,12 @@ module SorbetView
 
         sig { params(path: String, ruby_path: String, config: Configuration).returns(TemplateContext) }
         def resolve_layout(path, ruby_path, config)
+          helper_includes = resolve_runtime_helper_includes(path, config)
           new(
             class_name: "SorbetView::Generated::#{path_to_class_name(path, config)}",
             superclass: '::ActionView::Base',
             includes: [
-              '::ApplicationController::HelperMethods',
+              *helper_includes,
               *config.extra_includes
             ],
             template_path: path,
@@ -167,11 +169,12 @@ module SorbetView
 
         sig { params(path: String, ruby_path: String, config: Configuration).returns(TemplateContext) }
         def resolve_partial(path, ruby_path, config)
+          helper_includes = resolve_runtime_helper_includes(path, config)
           new(
             class_name: "SorbetView::Generated::#{path_to_class_name(path, config)}",
             superclass: '::ActionView::Base',
             includes: [
-              '::ApplicationController::HelperMethods',
+              *helper_includes,
               *config.extra_includes
             ],
             template_path: path,
@@ -188,6 +191,97 @@ module SorbetView
             template_path: path,
             ruby_path: ruby_path
           )
+        end
+
+        sig { params(path: String, config: Configuration).returns(T::Array[String]) }
+        def resolve_runtime_helper_includes(path, config)
+          return ['::ApplicationController::HelperMethods'] unless defined?(::ActionController::Base)
+
+          relative = strip_input_dir(path, config)
+          names = if relative.start_with?('layouts/')
+            helper_modules_for_layout(relative)
+          elsif File.basename(relative).start_with?('_')
+            helper_modules_for_partial(relative)
+          else
+            helper_modules_for_controller_view(relative)
+          end
+
+          return ['::ApplicationController::HelperMethods'] if names.empty?
+
+          names.map { |name| "::#{name}" }
+        rescue StandardError
+          ['::ApplicationController::HelperMethods']
+        end
+
+        sig { params(relative: String).returns(T::Array[String]) }
+        def helper_modules_for_controller_view(relative)
+          controller_path = File.dirname(relative)
+          return [] if controller_path.nil? || controller_path.empty? || controller_path == '.'
+
+          controller = find_controller_by_path(controller_path)
+          helper_module_names_for(controller)
+        end
+
+        sig { params(relative: String).returns(T::Array[String]) }
+        def helper_modules_for_layout(relative)
+          filename = File.basename(relative)
+          layout_name = T.must(filename.split('.').first).to_s
+          return [] if layout_name.empty?
+
+          all_concrete_controllers.flat_map do |controller|
+            next [] unless controller.respond_to?(:_layout)
+            next [] unless controller._layout == layout_name
+
+            helper_module_names_for(controller)
+          end.uniq.sort
+        end
+
+        sig { params(relative: String).returns(T::Array[String]) }
+        def helper_modules_for_partial(relative)
+          dir = File.dirname(relative)
+          return [] if dir.nil? || dir.empty? || dir == '.'
+
+          # Try exact directory first, then walk up (e.g. users/forms -> users).
+          parts = dir.split('/')
+          candidates = parts.length.downto(1).map { |i| parts.first(i).join('/') }
+
+          candidates.each do |controller_path|
+            controller = find_controller_by_path(controller_path)
+            names = helper_module_names_for(controller)
+            return names unless names.empty?
+          end
+
+          []
+        end
+
+        sig { params(controller_path: String).returns(T.nilable(T.class_of(::ActionController::Base))) }
+        def find_controller_by_path(controller_path)
+          all_concrete_controllers.find do |controller|
+            controller.respond_to?(:controller_path) && controller.controller_path == controller_path
+          end
+        end
+
+        sig { returns(T::Array[T.class_of(::ActionController::Base)]) }
+        def all_concrete_controllers
+          ObjectSpace.each_object(Class).select do |klass|
+            klass < ::ActionController::Base && !klass.abstract?
+          rescue StandardError
+            false
+          end
+        end
+
+        sig { params(controller: T.nilable(T.class_of(::ActionController::Base))).returns(T::Array[String]) }
+        def helper_module_names_for(controller)
+          return [] unless controller
+
+          # Use the actual runtime helper chain for this controller.
+          controller._helpers.ancestors.filter_map do |mod|
+            next unless mod.is_a?(Module) && !mod.is_a?(Class)
+            name = mod.name
+            next if name.nil? || name.empty?
+            next if name.start_with?('ActionController::') || name.start_with?('AbstractController::')
+            name
+          end.uniq
         end
       end
     end

@@ -69,8 +69,8 @@ module Tapioca
           controllers.each do |controller|
             path = controller.controller_path
 
-          controller.action_methods.to_a.sort.each do |action_name|
-            next unless action_name.match?(/\A[a-zA-Z_][a-zA-Z0-9_]*\z/)
+            controller.action_methods.to_a.sort.each do |action_name|
+              next unless action_name.match?(/\A[a-zA-Z_][a-zA-Z0-9_]*\z/)
 
               action_ivars = extract_ivars_from_srb_lens(controller, action_name.to_s)
               next if action_ivars.empty?
@@ -128,11 +128,7 @@ module Tapioca
           common_keys.each do |key|
             type_a = T.must(a[key])
             type_b = T.must(b[key])
-            result[key] = if type_a == type_b
-              type_a
-            else
-              "T.all(#{type_a}, #{type_b})"
-            end
+            result[key] = type_a == type_b ? type_a : "T.all(#{type_a}, #{type_b})"
           end
           result
         end
@@ -408,25 +404,15 @@ module Tapioca
           rows.sort_by { |row| T.must(row).first }
         end
 
-        # Returns controller-specific helper module names (modules included via `helper` that are not in ApplicationController)
+        # Returns runtime helper module names for the controller.
         sig { params(controller: T.untyped).returns(T::Array[String]) }
         def extract_controller_helper_modules(controller)
           return [] unless controller.respond_to?(:_helpers)
 
-          base_helpers = if defined?(::ApplicationController) && ::ApplicationController.respond_to?(:_helpers)
-            ::ApplicationController._helpers.ancestors
-          else
-            []
-          end
-
-          controller_helpers = controller._helpers.ancestors
-          specific_modules = controller_helpers - base_helpers
-
-          specific_modules.filter_map do |mod|
+          controller._helpers.ancestors.filter_map do |mod|
             next unless mod.is_a?(Module) && !mod.is_a?(Class)
             name = mod.name
             next if name.nil? || name.empty?
-            next if name.include?('HelperMethods')
             next if name.start_with?('ActionController::') || name.start_with?('AbstractController::')
             name
           end

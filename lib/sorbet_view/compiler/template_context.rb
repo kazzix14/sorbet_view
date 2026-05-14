@@ -51,6 +51,8 @@ module SorbetView
       class << self
         extend T::Sig
 
+        @all_concrete_controllers = T.let(nil, T.nilable(T::Array[T.untyped]))
+
         private
 
         # Strip the matching input_dir prefix from a template path
@@ -107,11 +109,7 @@ module SorbetView
 
           dir = File.dirname(relative)
 
-          parts = if dir == '.'
-            [basename]
-          else
-            dir.split('/') + [basename]
-          end
+          parts = dir == '.' ? [basename] : dir.split('/') + [basename]
 
           parts += format_parts
 
@@ -198,18 +196,20 @@ module SorbetView
           return ['::ApplicationController::HelperMethods'] unless defined?(::ActionController::Base)
 
           relative = strip_input_dir(path, config)
-          names = if relative.start_with?('layouts/')
-            helper_modules_for_layout(relative)
+          names = []
+          if relative.start_with?('layouts/')
+            names = helper_modules_for_layout(relative)
           elsif File.basename(relative).start_with?('_')
-            helper_modules_for_partial(relative)
+            names = helper_modules_for_partial(relative)
           else
-            helper_modules_for_controller_view(relative)
+            names = helper_modules_for_controller_view(relative)
           end
 
           return ['::ApplicationController::HelperMethods'] if names.empty?
 
           names.map { |name| "::#{name}" }
-        rescue StandardError
+        rescue StandardError => e
+          $stderr.puts "[SorbetView] resolve_runtime_helper_includes failed: #{e.class}: #{e.message}"
           ['::ApplicationController::HelperMethods']
         end
 
@@ -241,7 +241,8 @@ module SorbetView
           dir = File.dirname(relative)
           return [] if dir.nil? || dir.empty? || dir == '.'
 
-          # Try exact directory first, then walk up (e.g. users/forms -> users).
+          # Partials can live under subdirectories that share a parent controller
+          # (e.g. users/forms/_field.html.erb should use UsersController helpers).
           parts = dir.split('/')
           candidates = parts.length.downto(1).map { |i| parts.first(i).join('/') }
 
@@ -254,25 +255,32 @@ module SorbetView
           []
         end
 
-        sig { params(controller_path: String).returns(T.nilable(T.class_of(::ActionController::Base))) }
+        sig { params(controller_path: String).returns(T.untyped) }
         def find_controller_by_path(controller_path)
           all_concrete_controllers.find do |controller|
             controller.respond_to?(:controller_path) && controller.controller_path == controller_path
           end
         end
 
-        sig { returns(T::Array[T.class_of(::ActionController::Base)]) }
+        sig { returns(T::Array[T.untyped]) }
         def all_concrete_controllers
-          ObjectSpace.each_object(Class).select do |klass|
+          controllers = @all_concrete_controllers
+          return controllers if controllers
+
+          controllers = ObjectSpace.each_object(Class).select do |klass|
             klass < ::ActionController::Base && !klass.abstract?
           rescue StandardError
             false
-          end
+          end.sort_by { |klass| (klass.name || "AnonymousController:#{klass.object_id}").to_s }
+
+          @all_concrete_controllers = controllers
+          controllers
         end
 
-        sig { params(controller: T.nilable(T.class_of(::ActionController::Base))).returns(T::Array[String]) }
+        sig { params(controller: T.untyped).returns(T::Array[String]) }
         def helper_module_names_for(controller)
           return [] unless controller
+          return [] unless controller.respond_to?(:_helpers)
 
           # Use the actual runtime helper chain for this controller.
           controller._helpers.ancestors.filter_map do |mod|

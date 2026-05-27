@@ -283,7 +283,8 @@ module Tapioca
 
           layout_name = controller._layout if controller.respond_to?(:_layout)
           if layout_name.is_a?(String) && !layout_name.empty?
-            base_class_name = "SorbetView::Generated::Layouts::#{camelize(layout_name)}"
+            layout_parts = layout_name.split('/').map { |p| camelize(p) }
+            base_class_name = "SorbetView::Generated::Layouts::#{layout_parts.join('::')}"
             format_suffixes = find_template_format_suffixes('layouts', layout_name)
             class_names = format_suffixes.empty? ? [base_class_name] : format_suffixes.map { |fs| "#{base_class_name}::#{fs}" }
 

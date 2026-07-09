@@ -136,8 +136,7 @@ module Tapioca
         # Extract instance variables and their types from srb-lens for a controller action
         sig { params(controller: T.untyped, action_name: String).returns(T::Hash[String, String]) }
         def extract_ivars_from_srb_lens(controller, action_name)
-          methods = @project.find_methods("#{controller.name}##{action_name}")
-          method_info = methods&.first
+          method_info = find_method_info(controller, action_name)
           return {} unless method_info
 
           ivars = method_info.ivars
@@ -418,10 +417,15 @@ module Tapioca
           end
         end
 
+        # srb-lens matches class names by suffix, so a query for "FoosController#show" also
+        # matches "Admin::FoosController#show". Prefer the method whose FQN equals the query
+        # exactly; fall back to the first match, which is still needed for actions inherited
+        # from a parent controller (their FQN is the parent's and never equals the query).
         sig { params(controller: T.untyped, method_name: String).returns(T.untyped) }
         def find_method_info(controller, method_name)
-          methods = @project.find_methods("#{controller.name}##{method_name}")
-          methods&.first
+          query = "#{controller.name}##{method_name}"
+          methods = @project.find_methods(query)
+          methods&.find { |m| m.fqn == query } || methods&.first
         end
 
         sig { params(method_info: T.untyped).returns(T::Array[RBI::Param]) }
